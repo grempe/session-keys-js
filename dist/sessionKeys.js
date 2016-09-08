@@ -1,88 +1,154 @@
-(function(f){if(typeof exports==="object"&&typeof module!=="undefined"){module.exports=f()}else if(typeof define==="function"&&define.amd){define([],f)}else{var g;if(typeof window!=="undefined"){g=window}else if(typeof global!=="undefined"){g=global}else if(typeof self!=="undefined"){g=self}else{g=this}g.session25519 = f()}})(function(){var define,module,exports;return (function e(t,n,r){function s(o,u){if(!n[o]){if(!t[o]){var a=typeof require=="function"&&require;if(!u&&a)return a(o,!0);if(i)return i(o,!0);var f=new Error("Cannot find module '"+o+"'");throw f.code="MODULE_NOT_FOUND",f}var l=n[o]={exports:{}};t[o][0].call(l.exports,function(e){var n=t[o][1][e];return s(n?n:e)},l,l.exports,e,t,n,r)}return n[o].exports}var i=typeof require=="function"&&require;for(var o=0;o<r.length;o++)s(r[o]);return s})({1:[function(require,module,exports){
-var BLAKE2s = require('blake2s-js')
+(function(f){if(typeof exports==="object"&&typeof module!=="undefined"){module.exports=f()}else if(typeof define==="function"&&define.amd){define([],f)}else{var g;if(typeof window!=="undefined"){g=window}else if(typeof global!=="undefined"){g=global}else if(typeof self!=="undefined"){g=self}else{g=this}g.sessionKeys = f()}})(function(){var define,module,exports;return (function e(t,n,r){function s(o,u){if(!n[o]){if(!t[o]){var a=typeof require=="function"&&require;if(!u&&a)return a(o,!0);if(i)return i(o,!0);var f=new Error("Cannot find module '"+o+"'");throw f.code="MODULE_NOT_FOUND",f}var l=n[o]={exports:{}};t[o][0].call(l.exports,function(e){var n=t[o][1][e];return s(n?n:e)},l,l.exports,e,t,n,r)}return n[o].exports}var i=typeof require=="function"&&require;for(var o=0;o<r.length;o++)s(r[o]);return s})({1:[function(require,module,exports){
+var sha256 = require('fast-sha256')
 var scrypt = require('scrypt-async')
 var nacl = require('tweetnacl')
 var base64 = require('base64-js')
 
 // Code inspired by:
 // https://github.com/kaepora/miniLock/blob/master/src/js/miniLock.js
+// https://github.com/jo/session25519
 
 // Extracted from tweetnacl-util-js
 // https://github.com/dchest/tweetnacl-util-js/blob/master/nacl-util.js#L16
-function decodeUTF8 (s) {
+function decodeUTF8(s) {
   var i, d = unescape(encodeURIComponent(s)), b = new Uint8Array(d.length)
   for (i = 0; i < d.length; i++) b[i] = d.charCodeAt(i)
   return b
 }
 
+// Convert a decimal to hex with proper padding
 // Input:
-//   key                      // User key hash (Uint8Array)
-//   salt                     // Salt (email or username) (Uint8Array)
-//   logN              = 17   // CPU/memory cost parameter (Integer 1 to 31)
-//   r                 = 8    // Block size parameter
-//   dkLen             = 64   // Length of derived key in Bytes
-//   interruptStep     = 1000 // Steps to split calculation with timeouts
-//   callback function
+//   d                      // A decimal number between 0-255
 //
 // Result:
-//   Returns 64 bytes of scrypt derived key material in an Array,
-//   which is then passed to the callback.
+//   Returns a padded hex string representing the decimal arg
 //
-function getScryptKey (key, salt, logN, r, dkLen, interruptStep, callback) {
-  'use strict'
+function decToHex(d) {
+  var hex = Number(d).toString(16)
+  while (hex.length < 2) {
+    hex = "0" + hex
+  }
+  return hex;
+}
 
-  scrypt(key, salt, logN, r, dkLen, interruptStep, function (keyBytes) {
-    return callback(keyBytes)
-  }, null)
+// Convert Uint8Array of bytes to hex
+// Input:
+//   arr                      // Uint8Array of bytes to convert to hex
+//
+// Result:
+//   Returns a Base16 hex encoded version of arr
+//
+function byteArrayToHex(arr) {
+  hex = ''
+  for (i = 0; i < arr.length; ++i) {
+    hex += decToHex(arr[i])
+  }
+  return hex
 }
 
 // Input:
-//  email       // A UTF-8 username or email
+//   key                      // User key hash (Uint8Array)
+//   salt                     // Salt (username or email) (Uint8Array)
+//   callback function
+//
+// Result:
+//   Returns 256 bytes of scrypt derived key material in a Uint8Array,
+//   which is then passed to the callback.
+//
+function getScryptKey(key, salt, callback) {
+  'use strict'
+
+  scrypt(key, salt, {
+    N: 16384,
+    r: 8,
+    p: 1,
+    dkLen: 256,
+    encoding: 'binary'
+  }, function(derivedKey) {
+    return callback(derivedKey)  
+  })
+}
+
+// Input:
+//  id          // A UTF-8 username or email
 //  password    // A UTF-8 passphrase
 //  callback    // A callback function
 //
 // Result:
-//   An object literal with keys
+//   An object literal with all key material
 //
-module.exports = function session (email, password, callback) {
+module.exports = function (id, password, callback) {
   'use strict'
 
-  // A 32 Byte BLAKE2s hash of the password bytes
-  var keyHash = new BLAKE2s()
-  keyHash.update(decodeUTF8(password))
-  var scryptKey = keyHash.digest()
+  var idSha256Bbytes, idSha256Hex, scryptKey, scryptSalt, byteKeys,
+      hexKeys, naclEncryptionKeyPairs, naclEncryptionKeyPairsBase64,
+      naclSigningKeyPairs, naclSigningKeyPairsBase64, out
 
-  getScryptKey(scryptKey, email, 17, 8, 64, 1000, function (scryptByteArray) {
+  idSha256Bbytes = sha256(decodeUTF8(id))
+  idSha256Hex = byteArrayToHex(idSha256Bbytes)
+
+  scryptKey = sha256(decodeUTF8(password))
+  scryptSalt = sha256(decodeUTF8([idSha256Hex, idSha256Hex.length, 'session_keys'].join('')))
+
+  getScryptKey(scryptKey, scryptSalt, function (scryptByteArray) {
     try {
-      var keys, seedBytesUint8Array, boxKeyPairSeed,
-        signKeyPairSeed, signKeyPair
+      byteKeys = []
+      hexKeys = []
+      naclEncryptionKeyPairs = []
+      naclEncryptionKeyPairsBase64 = []
+      naclSigningKeyPairs = []
+      naclSigningKeyPairsBase64 = []
 
-      // Convert scrypt Array of Bytes to Uint8Array
-      seedBytesUint8Array = new Uint8Array(scryptByteArray)
+      // Generate 8 pairs of all types of keys. The key types
+      // at each Array index are all derived from the same key
+      // bytes. Use different Array index values for each to ensure
+      // they don't share common key bytes. For example:
+      //
+      // uuid : output.hexKeys[0]
+      // encryption keypair : output.naclEncryptionKeyPairs[1]
+      // signing keypair : output.naclSigningKeyPairs[2]
+      //
+      var b = 0
+      for (var i = 0; i < 8; ++i) {
+        var byteArr = scryptByteArray.subarray(b, b + 32)
+        byteKeys.push(byteArr)
+        hexKeys.push(byteArrayToHex(byteArr))
 
-      // First 32 Bytes of scrypt seed for encryption keys
-      // Note : first 32 Bytes are the same for dkLen 32 (old way) and 64!
-      boxKeyPairSeed = seedBytesUint8Array.subarray(0, 32)
-      keys = nacl.box.keyPair.fromSecretKey(boxKeyPairSeed)
-      keys.publicKeyBase64 = base64.fromByteArray(keys.publicKey)
-      keys.secretKeyBase64 = base64.fromByteArray(keys.secretKey)
+        var naclEncryptionKeyPair = nacl.box.keyPair.fromSecretKey(byteArr)
+        var naclSigningKeyPair = nacl.sign.keyPair.fromSeed(byteArr)
 
-      // Last 32 Bytes of scrypt seed for signing keys
-      signKeyPairSeed = seedBytesUint8Array.subarray(32, 64)
-      signKeyPair = nacl.sign.keyPair.fromSeed(signKeyPairSeed)
-      keys.publicSignKey = signKeyPair.publicKey
-      keys.publicSignKeyBase64 = base64.fromByteArray(signKeyPair.publicKey)
-      keys.secretSignKey = signKeyPair.secretKey
-      keys.secretSignKeyBase64 = base64.fromByteArray(signKeyPair.secretKey)
+        naclEncryptionKeyPairs.push(naclEncryptionKeyPair)
+        naclEncryptionKeyPairsBase64.push({
+          secretKey: base64.fromByteArray(naclEncryptionKeyPair.secretKey),
+          publicKey: base64.fromByteArray(naclEncryptionKeyPair.publicKey)
+        })
 
-      return callback(null, keys)
+        naclSigningKeyPairs.push(naclSigningKeyPair)
+        naclSigningKeyPairsBase64.push({
+          secretKey: base64.fromByteArray(naclSigningKeyPair.secretKey),
+          publicKey: base64.fromByteArray(naclSigningKeyPair.publicKey)
+        })
+
+        b += 32
+      }
+
+      out = {}
+      out.id = idSha256Hex
+      out.byteKeys = byteKeys
+      out.hexKeys = hexKeys
+      out.naclEncryptionKeyPairs = naclEncryptionKeyPairs
+      out.naclEncryptionKeyPairsBase64 = naclEncryptionKeyPairsBase64
+      out.naclSigningKeyPairs = naclSigningKeyPairs
+      out.naclSigningKeyPairsBase64 = naclSigningKeyPairsBase64
+
+      return callback(null, out)
     } catch (err) {
       return callback(err)
     }
   })
 }
 
-},{"base64-js":2,"blake2s-js":3,"scrypt-async":5,"tweetnacl":6}],2:[function(require,module,exports){
+},{"base64-js":2,"fast-sha256":4,"scrypt-async":5,"tweetnacl":6}],2:[function(require,module,exports){
 'use strict'
 
 exports.toByteArray = toByteArray
@@ -93,17 +159,12 @@ var revLookup = []
 var Arr = typeof Uint8Array !== 'undefined' ? Uint8Array : Array
 
 function init () {
-  var i
   var code = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/'
-  var len = code.length
-
-  for (i = 0; i < len; i++) {
+  for (var i = 0, len = code.length; i < len; ++i) {
     lookup[i] = code[i]
-  }
-
-  for (i = 0; i < len; ++i) {
     revLookup[code.charCodeAt(i)] = i
   }
+
   revLookup['-'.charCodeAt(0)] = 62
   revLookup['_'.charCodeAt(0)] = 63
 }
@@ -135,8 +196,8 @@ function toByteArray (b64) {
 
   for (i = 0, j = 0; i < l; i += 4, j += 3) {
     tmp = (revLookup[b64.charCodeAt(i)] << 18) | (revLookup[b64.charCodeAt(i + 1)] << 12) | (revLookup[b64.charCodeAt(i + 2)] << 6) | revLookup[b64.charCodeAt(i + 3)]
-    arr[L++] = (tmp & 0xFF0000) >> 16
-    arr[L++] = (tmp & 0xFF00) >> 8
+    arr[L++] = (tmp >> 16) & 0xFF
+    arr[L++] = (tmp >> 8) & 0xFF
     arr[L++] = tmp & 0xFF
   }
 
@@ -199,1375 +260,422 @@ function fromByteArray (uint8) {
 }
 
 },{}],3:[function(require,module,exports){
-var BLAKE2s = (function() {
-
-  var MAX_DIGEST_LENGTH = 32;
-  var BLOCK_LENGTH = 64;
-  var MAX_KEY_LENGTH = 32;
-
-  var IV = new Uint32Array([
-    0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a,
-    0x510e527f, 0x9b05688c, 0x1f83d9ab, 0x5be0cd19
-  ]);
-
-  function BLAKE2s(digestLength, key) {
-    if (typeof digestLength === 'undefined')
-      digestLength = MAX_DIGEST_LENGTH;
-
-    if (digestLength <= 0 || digestLength > MAX_DIGEST_LENGTH)
-      throw new Error('bad digestLength');
-
-    this.digestLength = digestLength;
-
-    if (typeof key === 'string')
-      throw new TypeError('key must be a Uint8Array or an Array of bytes');
-
-    var keyLength = key ? key.length : 0;
-    if (keyLength > MAX_KEY_LENGTH) throw new Error('key is too long');
-
-    this.isFinished = false;
-
-    // Hash state.
-    this.h = new Uint32Array(IV);
-
-    // XOR part of parameter block.
-    var param = [digestLength & 0xff, keyLength, 1, 1];
-    this.h[0] ^= param[0] & 0xff | (param[1] & 0xff) << 8 | (param[2] & 0xff) << 16 | (param[3] & 0xff) << 24;
-
-    // Buffer for data.
-    this.x = new Uint8Array(BLOCK_LENGTH);
-    this.nx = 0;
-
-    // Byte counter.
-    this.t0 = 0;
-    this.t1 = 0;
-
-    // Flags.
-    this.f0 = 0;
-    this.f1 = 0;
-
-    // Fill buffer with key, if present.
-    if (keyLength > 0) {
-      for (var i = 0; i < keyLength; i++) this.x[i] = key[i];
-      for (i = keyLength; i < BLOCK_LENGTH; i++) this.x[i] = 0;
-      this.nx = BLOCK_LENGTH;
-    }
-  }
-
-  BLAKE2s.prototype.processBlock = function(length) {
-    this.t0 += length;
-    if (this.t0 != this.t0 >>> 0) {
-      this.t0 = 0;
-      this.t1++;
-    }
-
-    var v0  = this.h[0],
-        v1  = this.h[1],
-        v2  = this.h[2],
-        v3  = this.h[3],
-        v4  = this.h[4],
-        v5  = this.h[5],
-        v6  = this.h[6],
-        v7  = this.h[7],
-        v8  = IV[0],
-        v9  = IV[1],
-        v10 = IV[2],
-        v11 = IV[3],
-        v12 = IV[4] ^ this.t0,
-        v13 = IV[5] ^ this.t1,
-        v14 = IV[6] ^ this.f0,
-        v15 = IV[7] ^ this.f1;
-
-    var x = this.x;
-    var m0  = x[ 0] & 0xff | (x[ 1] & 0xff) << 8 | (x[ 2] & 0xff) << 16 | (x[ 3] & 0xff) << 24,
-        m1  = x[ 4] & 0xff | (x[ 5] & 0xff) << 8 | (x[ 6] & 0xff) << 16 | (x[ 7] & 0xff) << 24,
-        m2  = x[ 8] & 0xff | (x[ 9] & 0xff) << 8 | (x[10] & 0xff) << 16 | (x[11] & 0xff) << 24,
-        m3  = x[12] & 0xff | (x[13] & 0xff) << 8 | (x[14] & 0xff) << 16 | (x[15] & 0xff) << 24,
-        m4  = x[16] & 0xff | (x[17] & 0xff) << 8 | (x[18] & 0xff) << 16 | (x[19] & 0xff) << 24,
-        m5  = x[20] & 0xff | (x[21] & 0xff) << 8 | (x[22] & 0xff) << 16 | (x[23] & 0xff) << 24,
-        m6  = x[24] & 0xff | (x[25] & 0xff) << 8 | (x[26] & 0xff) << 16 | (x[27] & 0xff) << 24,
-        m7  = x[28] & 0xff | (x[29] & 0xff) << 8 | (x[30] & 0xff) << 16 | (x[31] & 0xff) << 24,
-        m8  = x[32] & 0xff | (x[33] & 0xff) << 8 | (x[34] & 0xff) << 16 | (x[35] & 0xff) << 24,
-        m9  = x[36] & 0xff | (x[37] & 0xff) << 8 | (x[38] & 0xff) << 16 | (x[39] & 0xff) << 24,
-        m10 = x[40] & 0xff | (x[41] & 0xff) << 8 | (x[42] & 0xff) << 16 | (x[43] & 0xff) << 24,
-        m11 = x[44] & 0xff | (x[45] & 0xff) << 8 | (x[46] & 0xff) << 16 | (x[47] & 0xff) << 24,
-        m12 = x[48] & 0xff | (x[49] & 0xff) << 8 | (x[50] & 0xff) << 16 | (x[51] & 0xff) << 24,
-        m13 = x[52] & 0xff | (x[53] & 0xff) << 8 | (x[54] & 0xff) << 16 | (x[55] & 0xff) << 24,
-        m14 = x[56] & 0xff | (x[57] & 0xff) << 8 | (x[58] & 0xff) << 16 | (x[59] & 0xff) << 24,
-        m15 = x[60] & 0xff | (x[61] & 0xff) << 8 | (x[62] & 0xff) << 16 | (x[63] & 0xff) << 24;
-
-    // Round 1.
-    v0 += m0;
-    v0 += v4;
-    v12 ^= v0;
-    v12 = v12 << (32 - 16) | v12 >>> 16;
-    v8 += v12;
-    v4 ^= v8;
-    v4 = v4 << (32 - 12) | v4 >>> 12;
-    v1 += m2;
-    v1 += v5;
-    v13 ^= v1;
-    v13 = v13 << (32 - 16) | v13 >>> 16;
-    v9 += v13;
-    v5 ^= v9;
-    v5 = v5 << (32 - 12) | v5 >>> 12;
-    v2 += m4;
-    v2 += v6;
-    v14 ^= v2;
-    v14 = v14 << (32 - 16) | v14 >>> 16;
-    v10 += v14;
-    v6 ^= v10;
-    v6 = v6 << (32 - 12) | v6 >>> 12;
-    v3 += m6;
-    v3 += v7;
-    v15 ^= v3;
-    v15 = v15 << (32 - 16) | v15 >>> 16;
-    v11 += v15;
-    v7 ^= v11;
-    v7 = v7 << (32 - 12) | v7 >>> 12;
-    v2 += m5;
-    v2 += v6;
-    v14 ^= v2;
-    v14 = v14 << (32 - 8) | v14 >>> 8;
-    v10 += v14;
-    v6 ^= v10;
-    v6 = v6 << (32 - 7) | v6 >>> 7;
-    v3 += m7;
-    v3 += v7;
-    v15 ^= v3;
-    v15 = v15 << (32 - 8) | v15 >>> 8;
-    v11 += v15;
-    v7 ^= v11;
-    v7 = v7 << (32 - 7) | v7 >>> 7;
-    v1 += m3;
-    v1 += v5;
-    v13 ^= v1;
-    v13 = v13 << (32 - 8) | v13 >>> 8;
-    v9 += v13;
-    v5 ^= v9;
-    v5 = v5 << (32 - 7) | v5 >>> 7;
-    v0 += m1;
-    v0 += v4;
-    v12 ^= v0;
-    v12 = v12 << (32 - 8) | v12 >>> 8;
-    v8 += v12;
-    v4 ^= v8;
-    v4 = v4 << (32 - 7) | v4 >>> 7;
-    v0 += m8;
-    v0 += v5;
-    v15 ^= v0;
-    v15 = v15 << (32 - 16) | v15 >>> 16;
-    v10 += v15;
-    v5 ^= v10;
-    v5 = v5 << (32 - 12) | v5 >>> 12;
-    v1 += m10;
-    v1 += v6;
-    v12 ^= v1;
-    v12 = v12 << (32 - 16) | v12 >>> 16;
-    v11 += v12;
-    v6 ^= v11;
-    v6 = v6 << (32 - 12) | v6 >>> 12;
-    v2 += m12;
-    v2 += v7;
-    v13 ^= v2;
-    v13 = v13 << (32 - 16) | v13 >>> 16;
-    v8 += v13;
-    v7 ^= v8;
-    v7 = v7 << (32 - 12) | v7 >>> 12;
-    v3 += m14;
-    v3 += v4;
-    v14 ^= v3;
-    v14 = v14 << (32 - 16) | v14 >>> 16;
-    v9 += v14;
-    v4 ^= v9;
-    v4 = v4 << (32 - 12) | v4 >>> 12;
-    v2 += m13;
-    v2 += v7;
-    v13 ^= v2;
-    v13 = v13 << (32 - 8) | v13 >>> 8;
-    v8 += v13;
-    v7 ^= v8;
-    v7 = v7 << (32 - 7) | v7 >>> 7;
-    v3 += m15;
-    v3 += v4;
-    v14 ^= v3;
-    v14 = v14 << (32 - 8) | v14 >>> 8;
-    v9 += v14;
-    v4 ^= v9;
-    v4 = v4 << (32 - 7) | v4 >>> 7;
-    v1 += m11;
-    v1 += v6;
-    v12 ^= v1;
-    v12 = v12 << (32 - 8) | v12 >>> 8;
-    v11 += v12;
-    v6 ^= v11;
-    v6 = v6 << (32 - 7) | v6 >>> 7;
-    v0 += m9;
-    v0 += v5;
-    v15 ^= v0;
-    v15 = v15 << (32 - 8) | v15 >>> 8;
-    v10 += v15;
-    v5 ^= v10;
-    v5 = v5 << (32 - 7) | v5 >>> 7;
-
-    // Round 2.
-    v0 += m14;
-    v0 += v4;
-    v12 ^= v0;
-    v12 = v12 << (32 - 16) | v12 >>> 16;
-    v8 += v12;
-    v4 ^= v8;
-    v4 = v4 << (32 - 12) | v4 >>> 12;
-    v1 += m4;
-    v1 += v5;
-    v13 ^= v1;
-    v13 = v13 << (32 - 16) | v13 >>> 16;
-    v9 += v13;
-    v5 ^= v9;
-    v5 = v5 << (32 - 12) | v5 >>> 12;
-    v2 += m9;
-    v2 += v6;
-    v14 ^= v2;
-    v14 = v14 << (32 - 16) | v14 >>> 16;
-    v10 += v14;
-    v6 ^= v10;
-    v6 = v6 << (32 - 12) | v6 >>> 12;
-    v3 += m13;
-    v3 += v7;
-    v15 ^= v3;
-    v15 = v15 << (32 - 16) | v15 >>> 16;
-    v11 += v15;
-    v7 ^= v11;
-    v7 = v7 << (32 - 12) | v7 >>> 12;
-    v2 += m15;
-    v2 += v6;
-    v14 ^= v2;
-    v14 = v14 << (32 - 8) | v14 >>> 8;
-    v10 += v14;
-    v6 ^= v10;
-    v6 = v6 << (32 - 7) | v6 >>> 7;
-    v3 += m6;
-    v3 += v7;
-    v15 ^= v3;
-    v15 = v15 << (32 - 8) | v15 >>> 8;
-    v11 += v15;
-    v7 ^= v11;
-    v7 = v7 << (32 - 7) | v7 >>> 7;
-    v1 += m8;
-    v1 += v5;
-    v13 ^= v1;
-    v13 = v13 << (32 - 8) | v13 >>> 8;
-    v9 += v13;
-    v5 ^= v9;
-    v5 = v5 << (32 - 7) | v5 >>> 7;
-    v0 += m10;
-    v0 += v4;
-    v12 ^= v0;
-    v12 = v12 << (32 - 8) | v12 >>> 8;
-    v8 += v12;
-    v4 ^= v8;
-    v4 = v4 << (32 - 7) | v4 >>> 7;
-    v0 += m1;
-    v0 += v5;
-    v15 ^= v0;
-    v15 = v15 << (32 - 16) | v15 >>> 16;
-    v10 += v15;
-    v5 ^= v10;
-    v5 = v5 << (32 - 12) | v5 >>> 12;
-    v1 += m0;
-    v1 += v6;
-    v12 ^= v1;
-    v12 = v12 << (32 - 16) | v12 >>> 16;
-    v11 += v12;
-    v6 ^= v11;
-    v6 = v6 << (32 - 12) | v6 >>> 12;
-    v2 += m11;
-    v2 += v7;
-    v13 ^= v2;
-    v13 = v13 << (32 - 16) | v13 >>> 16;
-    v8 += v13;
-    v7 ^= v8;
-    v7 = v7 << (32 - 12) | v7 >>> 12;
-    v3 += m5;
-    v3 += v4;
-    v14 ^= v3;
-    v14 = v14 << (32 - 16) | v14 >>> 16;
-    v9 += v14;
-    v4 ^= v9;
-    v4 = v4 << (32 - 12) | v4 >>> 12;
-    v2 += m7;
-    v2 += v7;
-    v13 ^= v2;
-    v13 = v13 << (32 - 8) | v13 >>> 8;
-    v8 += v13;
-    v7 ^= v8;
-    v7 = v7 << (32 - 7) | v7 >>> 7;
-    v3 += m3;
-    v3 += v4;
-    v14 ^= v3;
-    v14 = v14 << (32 - 8) | v14 >>> 8;
-    v9 += v14;
-    v4 ^= v9;
-    v4 = v4 << (32 - 7) | v4 >>> 7;
-    v1 += m2;
-    v1 += v6;
-    v12 ^= v1;
-    v12 = v12 << (32 - 8) | v12 >>> 8;
-    v11 += v12;
-    v6 ^= v11;
-    v6 = v6 << (32 - 7) | v6 >>> 7;
-    v0 += m12;
-    v0 += v5;
-    v15 ^= v0;
-    v15 = v15 << (32 - 8) | v15 >>> 8;
-    v10 += v15;
-    v5 ^= v10;
-    v5 = v5 << (32 - 7) | v5 >>> 7;
-
-    // Round 3.
-    v0 += m11;
-    v0 += v4;
-    v12 ^= v0;
-    v12 = v12 << (32 - 16) | v12 >>> 16;
-    v8 += v12;
-    v4 ^= v8;
-    v4 = v4 << (32 - 12) | v4 >>> 12;
-    v1 += m12;
-    v1 += v5;
-    v13 ^= v1;
-    v13 = v13 << (32 - 16) | v13 >>> 16;
-    v9 += v13;
-    v5 ^= v9;
-    v5 = v5 << (32 - 12) | v5 >>> 12;
-    v2 += m5;
-    v2 += v6;
-    v14 ^= v2;
-    v14 = v14 << (32 - 16) | v14 >>> 16;
-    v10 += v14;
-    v6 ^= v10;
-    v6 = v6 << (32 - 12) | v6 >>> 12;
-    v3 += m15;
-    v3 += v7;
-    v15 ^= v3;
-    v15 = v15 << (32 - 16) | v15 >>> 16;
-    v11 += v15;
-    v7 ^= v11;
-    v7 = v7 << (32 - 12) | v7 >>> 12;
-    v2 += m2;
-    v2 += v6;
-    v14 ^= v2;
-    v14 = v14 << (32 - 8) | v14 >>> 8;
-    v10 += v14;
-    v6 ^= v10;
-    v6 = v6 << (32 - 7) | v6 >>> 7;
-    v3 += m13;
-    v3 += v7;
-    v15 ^= v3;
-    v15 = v15 << (32 - 8) | v15 >>> 8;
-    v11 += v15;
-    v7 ^= v11;
-    v7 = v7 << (32 - 7) | v7 >>> 7;
-    v1 += m0;
-    v1 += v5;
-    v13 ^= v1;
-    v13 = v13 << (32 - 8) | v13 >>> 8;
-    v9 += v13;
-    v5 ^= v9;
-    v5 = v5 << (32 - 7) | v5 >>> 7;
-    v0 += m8;
-    v0 += v4;
-    v12 ^= v0;
-    v12 = v12 << (32 - 8) | v12 >>> 8;
-    v8 += v12;
-    v4 ^= v8;
-    v4 = v4 << (32 - 7) | v4 >>> 7;
-    v0 += m10;
-    v0 += v5;
-    v15 ^= v0;
-    v15 = v15 << (32 - 16) | v15 >>> 16;
-    v10 += v15;
-    v5 ^= v10;
-    v5 = v5 << (32 - 12) | v5 >>> 12;
-    v1 += m3;
-    v1 += v6;
-    v12 ^= v1;
-    v12 = v12 << (32 - 16) | v12 >>> 16;
-    v11 += v12;
-    v6 ^= v11;
-    v6 = v6 << (32 - 12) | v6 >>> 12;
-    v2 += m7;
-    v2 += v7;
-    v13 ^= v2;
-    v13 = v13 << (32 - 16) | v13 >>> 16;
-    v8 += v13;
-    v7 ^= v8;
-    v7 = v7 << (32 - 12) | v7 >>> 12;
-    v3 += m9;
-    v3 += v4;
-    v14 ^= v3;
-    v14 = v14 << (32 - 16) | v14 >>> 16;
-    v9 += v14;
-    v4 ^= v9;
-    v4 = v4 << (32 - 12) | v4 >>> 12;
-    v2 += m1;
-    v2 += v7;
-    v13 ^= v2;
-    v13 = v13 << (32 - 8) | v13 >>> 8;
-    v8 += v13;
-    v7 ^= v8;
-    v7 = v7 << (32 - 7) | v7 >>> 7;
-    v3 += m4;
-    v3 += v4;
-    v14 ^= v3;
-    v14 = v14 << (32 - 8) | v14 >>> 8;
-    v9 += v14;
-    v4 ^= v9;
-    v4 = v4 << (32 - 7) | v4 >>> 7;
-    v1 += m6;
-    v1 += v6;
-    v12 ^= v1;
-    v12 = v12 << (32 - 8) | v12 >>> 8;
-    v11 += v12;
-    v6 ^= v11;
-    v6 = v6 << (32 - 7) | v6 >>> 7;
-    v0 += m14;
-    v0 += v5;
-    v15 ^= v0;
-    v15 = v15 << (32 - 8) | v15 >>> 8;
-    v10 += v15;
-    v5 ^= v10;
-    v5 = v5 << (32 - 7) | v5 >>> 7;
-
-    // Round 4.
-    v0 += m7;
-    v0 += v4;
-    v12 ^= v0;
-    v12 = v12 << (32 - 16) | v12 >>> 16;
-    v8 += v12;
-    v4 ^= v8;
-    v4 = v4 << (32 - 12) | v4 >>> 12;
-    v1 += m3;
-    v1 += v5;
-    v13 ^= v1;
-    v13 = v13 << (32 - 16) | v13 >>> 16;
-    v9 += v13;
-    v5 ^= v9;
-    v5 = v5 << (32 - 12) | v5 >>> 12;
-    v2 += m13;
-    v2 += v6;
-    v14 ^= v2;
-    v14 = v14 << (32 - 16) | v14 >>> 16;
-    v10 += v14;
-    v6 ^= v10;
-    v6 = v6 << (32 - 12) | v6 >>> 12;
-    v3 += m11;
-    v3 += v7;
-    v15 ^= v3;
-    v15 = v15 << (32 - 16) | v15 >>> 16;
-    v11 += v15;
-    v7 ^= v11;
-    v7 = v7 << (32 - 12) | v7 >>> 12;
-    v2 += m12;
-    v2 += v6;
-    v14 ^= v2;
-    v14 = v14 << (32 - 8) | v14 >>> 8;
-    v10 += v14;
-    v6 ^= v10;
-    v6 = v6 << (32 - 7) | v6 >>> 7;
-    v3 += m14;
-    v3 += v7;
-    v15 ^= v3;
-    v15 = v15 << (32 - 8) | v15 >>> 8;
-    v11 += v15;
-    v7 ^= v11;
-    v7 = v7 << (32 - 7) | v7 >>> 7;
-    v1 += m1;
-    v1 += v5;
-    v13 ^= v1;
-    v13 = v13 << (32 - 8) | v13 >>> 8;
-    v9 += v13;
-    v5 ^= v9;
-    v5 = v5 << (32 - 7) | v5 >>> 7;
-    v0 += m9;
-    v0 += v4;
-    v12 ^= v0;
-    v12 = v12 << (32 - 8) | v12 >>> 8;
-    v8 += v12;
-    v4 ^= v8;
-    v4 = v4 << (32 - 7) | v4 >>> 7;
-    v0 += m2;
-    v0 += v5;
-    v15 ^= v0;
-    v15 = v15 << (32 - 16) | v15 >>> 16;
-    v10 += v15;
-    v5 ^= v10;
-    v5 = v5 << (32 - 12) | v5 >>> 12;
-    v1 += m5;
-    v1 += v6;
-    v12 ^= v1;
-    v12 = v12 << (32 - 16) | v12 >>> 16;
-    v11 += v12;
-    v6 ^= v11;
-    v6 = v6 << (32 - 12) | v6 >>> 12;
-    v2 += m4;
-    v2 += v7;
-    v13 ^= v2;
-    v13 = v13 << (32 - 16) | v13 >>> 16;
-    v8 += v13;
-    v7 ^= v8;
-    v7 = v7 << (32 - 12) | v7 >>> 12;
-    v3 += m15;
-    v3 += v4;
-    v14 ^= v3;
-    v14 = v14 << (32 - 16) | v14 >>> 16;
-    v9 += v14;
-    v4 ^= v9;
-    v4 = v4 << (32 - 12) | v4 >>> 12;
-    v2 += m0;
-    v2 += v7;
-    v13 ^= v2;
-    v13 = v13 << (32 - 8) | v13 >>> 8;
-    v8 += v13;
-    v7 ^= v8;
-    v7 = v7 << (32 - 7) | v7 >>> 7;
-    v3 += m8;
-    v3 += v4;
-    v14 ^= v3;
-    v14 = v14 << (32 - 8) | v14 >>> 8;
-    v9 += v14;
-    v4 ^= v9;
-    v4 = v4 << (32 - 7) | v4 >>> 7;
-    v1 += m10;
-    v1 += v6;
-    v12 ^= v1;
-    v12 = v12 << (32 - 8) | v12 >>> 8;
-    v11 += v12;
-    v6 ^= v11;
-    v6 = v6 << (32 - 7) | v6 >>> 7;
-    v0 += m6;
-    v0 += v5;
-    v15 ^= v0;
-    v15 = v15 << (32 - 8) | v15 >>> 8;
-    v10 += v15;
-    v5 ^= v10;
-    v5 = v5 << (32 - 7) | v5 >>> 7;
-
-    // Round 5.
-    v0 += m9;
-    v0 += v4;
-    v12 ^= v0;
-    v12 = v12 << (32 - 16) | v12 >>> 16;
-    v8 += v12;
-    v4 ^= v8;
-    v4 = v4 << (32 - 12) | v4 >>> 12;
-    v1 += m5;
-    v1 += v5;
-    v13 ^= v1;
-    v13 = v13 << (32 - 16) | v13 >>> 16;
-    v9 += v13;
-    v5 ^= v9;
-    v5 = v5 << (32 - 12) | v5 >>> 12;
-    v2 += m2;
-    v2 += v6;
-    v14 ^= v2;
-    v14 = v14 << (32 - 16) | v14 >>> 16;
-    v10 += v14;
-    v6 ^= v10;
-    v6 = v6 << (32 - 12) | v6 >>> 12;
-    v3 += m10;
-    v3 += v7;
-    v15 ^= v3;
-    v15 = v15 << (32 - 16) | v15 >>> 16;
-    v11 += v15;
-    v7 ^= v11;
-    v7 = v7 << (32 - 12) | v7 >>> 12;
-    v2 += m4;
-    v2 += v6;
-    v14 ^= v2;
-    v14 = v14 << (32 - 8) | v14 >>> 8;
-    v10 += v14;
-    v6 ^= v10;
-    v6 = v6 << (32 - 7) | v6 >>> 7;
-    v3 += m15;
-    v3 += v7;
-    v15 ^= v3;
-    v15 = v15 << (32 - 8) | v15 >>> 8;
-    v11 += v15;
-    v7 ^= v11;
-    v7 = v7 << (32 - 7) | v7 >>> 7;
-    v1 += m7;
-    v1 += v5;
-    v13 ^= v1;
-    v13 = v13 << (32 - 8) | v13 >>> 8;
-    v9 += v13;
-    v5 ^= v9;
-    v5 = v5 << (32 - 7) | v5 >>> 7;
-    v0 += m0;
-    v0 += v4;
-    v12 ^= v0;
-    v12 = v12 << (32 - 8) | v12 >>> 8;
-    v8 += v12;
-    v4 ^= v8;
-    v4 = v4 << (32 - 7) | v4 >>> 7;
-    v0 += m14;
-    v0 += v5;
-    v15 ^= v0;
-    v15 = v15 << (32 - 16) | v15 >>> 16;
-    v10 += v15;
-    v5 ^= v10;
-    v5 = v5 << (32 - 12) | v5 >>> 12;
-    v1 += m11;
-    v1 += v6;
-    v12 ^= v1;
-    v12 = v12 << (32 - 16) | v12 >>> 16;
-    v11 += v12;
-    v6 ^= v11;
-    v6 = v6 << (32 - 12) | v6 >>> 12;
-    v2 += m6;
-    v2 += v7;
-    v13 ^= v2;
-    v13 = v13 << (32 - 16) | v13 >>> 16;
-    v8 += v13;
-    v7 ^= v8;
-    v7 = v7 << (32 - 12) | v7 >>> 12;
-    v3 += m3;
-    v3 += v4;
-    v14 ^= v3;
-    v14 = v14 << (32 - 16) | v14 >>> 16;
-    v9 += v14;
-    v4 ^= v9;
-    v4 = v4 << (32 - 12) | v4 >>> 12;
-    v2 += m8;
-    v2 += v7;
-    v13 ^= v2;
-    v13 = v13 << (32 - 8) | v13 >>> 8;
-    v8 += v13;
-    v7 ^= v8;
-    v7 = v7 << (32 - 7) | v7 >>> 7;
-    v3 += m13;
-    v3 += v4;
-    v14 ^= v3;
-    v14 = v14 << (32 - 8) | v14 >>> 8;
-    v9 += v14;
-    v4 ^= v9;
-    v4 = v4 << (32 - 7) | v4 >>> 7;
-    v1 += m12;
-    v1 += v6;
-    v12 ^= v1;
-    v12 = v12 << (32 - 8) | v12 >>> 8;
-    v11 += v12;
-    v6 ^= v11;
-    v6 = v6 << (32 - 7) | v6 >>> 7;
-    v0 += m1;
-    v0 += v5;
-    v15 ^= v0;
-    v15 = v15 << (32 - 8) | v15 >>> 8;
-    v10 += v15;
-    v5 ^= v10;
-    v5 = v5 << (32 - 7) | v5 >>> 7;
-
-    // Round 6.
-    v0 += m2;
-    v0 += v4;
-    v12 ^= v0;
-    v12 = v12 << (32 - 16) | v12 >>> 16;
-    v8 += v12;
-    v4 ^= v8;
-    v4 = v4 << (32 - 12) | v4 >>> 12;
-    v1 += m6;
-    v1 += v5;
-    v13 ^= v1;
-    v13 = v13 << (32 - 16) | v13 >>> 16;
-    v9 += v13;
-    v5 ^= v9;
-    v5 = v5 << (32 - 12) | v5 >>> 12;
-    v2 += m0;
-    v2 += v6;
-    v14 ^= v2;
-    v14 = v14 << (32 - 16) | v14 >>> 16;
-    v10 += v14;
-    v6 ^= v10;
-    v6 = v6 << (32 - 12) | v6 >>> 12;
-    v3 += m8;
-    v3 += v7;
-    v15 ^= v3;
-    v15 = v15 << (32 - 16) | v15 >>> 16;
-    v11 += v15;
-    v7 ^= v11;
-    v7 = v7 << (32 - 12) | v7 >>> 12;
-    v2 += m11;
-    v2 += v6;
-    v14 ^= v2;
-    v14 = v14 << (32 - 8) | v14 >>> 8;
-    v10 += v14;
-    v6 ^= v10;
-    v6 = v6 << (32 - 7) | v6 >>> 7;
-    v3 += m3;
-    v3 += v7;
-    v15 ^= v3;
-    v15 = v15 << (32 - 8) | v15 >>> 8;
-    v11 += v15;
-    v7 ^= v11;
-    v7 = v7 << (32 - 7) | v7 >>> 7;
-    v1 += m10;
-    v1 += v5;
-    v13 ^= v1;
-    v13 = v13 << (32 - 8) | v13 >>> 8;
-    v9 += v13;
-    v5 ^= v9;
-    v5 = v5 << (32 - 7) | v5 >>> 7;
-    v0 += m12;
-    v0 += v4;
-    v12 ^= v0;
-    v12 = v12 << (32 - 8) | v12 >>> 8;
-    v8 += v12;
-    v4 ^= v8;
-    v4 = v4 << (32 - 7) | v4 >>> 7;
-    v0 += m4;
-    v0 += v5;
-    v15 ^= v0;
-    v15 = v15 << (32 - 16) | v15 >>> 16;
-    v10 += v15;
-    v5 ^= v10;
-    v5 = v5 << (32 - 12) | v5 >>> 12;
-    v1 += m7;
-    v1 += v6;
-    v12 ^= v1;
-    v12 = v12 << (32 - 16) | v12 >>> 16;
-    v11 += v12;
-    v6 ^= v11;
-    v6 = v6 << (32 - 12) | v6 >>> 12;
-    v2 += m15;
-    v2 += v7;
-    v13 ^= v2;
-    v13 = v13 << (32 - 16) | v13 >>> 16;
-    v8 += v13;
-    v7 ^= v8;
-    v7 = v7 << (32 - 12) | v7 >>> 12;
-    v3 += m1;
-    v3 += v4;
-    v14 ^= v3;
-    v14 = v14 << (32 - 16) | v14 >>> 16;
-    v9 += v14;
-    v4 ^= v9;
-    v4 = v4 << (32 - 12) | v4 >>> 12;
-    v2 += m14;
-    v2 += v7;
-    v13 ^= v2;
-    v13 = v13 << (32 - 8) | v13 >>> 8;
-    v8 += v13;
-    v7 ^= v8;
-    v7 = v7 << (32 - 7) | v7 >>> 7;
-    v3 += m9;
-    v3 += v4;
-    v14 ^= v3;
-    v14 = v14 << (32 - 8) | v14 >>> 8;
-    v9 += v14;
-    v4 ^= v9;
-    v4 = v4 << (32 - 7) | v4 >>> 7;
-    v1 += m5;
-    v1 += v6;
-    v12 ^= v1;
-    v12 = v12 << (32 - 8) | v12 >>> 8;
-    v11 += v12;
-    v6 ^= v11;
-    v6 = v6 << (32 - 7) | v6 >>> 7;
-    v0 += m13;
-    v0 += v5;
-    v15 ^= v0;
-    v15 = v15 << (32 - 8) | v15 >>> 8;
-    v10 += v15;
-    v5 ^= v10;
-    v5 = v5 << (32 - 7) | v5 >>> 7;
-
-    // Round 7.
-    v0 += m12;
-    v0 += v4;
-    v12 ^= v0;
-    v12 = v12 << (32 - 16) | v12 >>> 16;
-    v8 += v12;
-    v4 ^= v8;
-    v4 = v4 << (32 - 12) | v4 >>> 12;
-    v1 += m1;
-    v1 += v5;
-    v13 ^= v1;
-    v13 = v13 << (32 - 16) | v13 >>> 16;
-    v9 += v13;
-    v5 ^= v9;
-    v5 = v5 << (32 - 12) | v5 >>> 12;
-    v2 += m14;
-    v2 += v6;
-    v14 ^= v2;
-    v14 = v14 << (32 - 16) | v14 >>> 16;
-    v10 += v14;
-    v6 ^= v10;
-    v6 = v6 << (32 - 12) | v6 >>> 12;
-    v3 += m4;
-    v3 += v7;
-    v15 ^= v3;
-    v15 = v15 << (32 - 16) | v15 >>> 16;
-    v11 += v15;
-    v7 ^= v11;
-    v7 = v7 << (32 - 12) | v7 >>> 12;
-    v2 += m13;
-    v2 += v6;
-    v14 ^= v2;
-    v14 = v14 << (32 - 8) | v14 >>> 8;
-    v10 += v14;
-    v6 ^= v10;
-    v6 = v6 << (32 - 7) | v6 >>> 7;
-    v3 += m10;
-    v3 += v7;
-    v15 ^= v3;
-    v15 = v15 << (32 - 8) | v15 >>> 8;
-    v11 += v15;
-    v7 ^= v11;
-    v7 = v7 << (32 - 7) | v7 >>> 7;
-    v1 += m15;
-    v1 += v5;
-    v13 ^= v1;
-    v13 = v13 << (32 - 8) | v13 >>> 8;
-    v9 += v13;
-    v5 ^= v9;
-    v5 = v5 << (32 - 7) | v5 >>> 7;
-    v0 += m5;
-    v0 += v4;
-    v12 ^= v0;
-    v12 = v12 << (32 - 8) | v12 >>> 8;
-    v8 += v12;
-    v4 ^= v8;
-    v4 = v4 << (32 - 7) | v4 >>> 7;
-    v0 += m0;
-    v0 += v5;
-    v15 ^= v0;
-    v15 = v15 << (32 - 16) | v15 >>> 16;
-    v10 += v15;
-    v5 ^= v10;
-    v5 = v5 << (32 - 12) | v5 >>> 12;
-    v1 += m6;
-    v1 += v6;
-    v12 ^= v1;
-    v12 = v12 << (32 - 16) | v12 >>> 16;
-    v11 += v12;
-    v6 ^= v11;
-    v6 = v6 << (32 - 12) | v6 >>> 12;
-    v2 += m9;
-    v2 += v7;
-    v13 ^= v2;
-    v13 = v13 << (32 - 16) | v13 >>> 16;
-    v8 += v13;
-    v7 ^= v8;
-    v7 = v7 << (32 - 12) | v7 >>> 12;
-    v3 += m8;
-    v3 += v4;
-    v14 ^= v3;
-    v14 = v14 << (32 - 16) | v14 >>> 16;
-    v9 += v14;
-    v4 ^= v9;
-    v4 = v4 << (32 - 12) | v4 >>> 12;
-    v2 += m2;
-    v2 += v7;
-    v13 ^= v2;
-    v13 = v13 << (32 - 8) | v13 >>> 8;
-    v8 += v13;
-    v7 ^= v8;
-    v7 = v7 << (32 - 7) | v7 >>> 7;
-    v3 += m11;
-    v3 += v4;
-    v14 ^= v3;
-    v14 = v14 << (32 - 8) | v14 >>> 8;
-    v9 += v14;
-    v4 ^= v9;
-    v4 = v4 << (32 - 7) | v4 >>> 7;
-    v1 += m3;
-    v1 += v6;
-    v12 ^= v1;
-    v12 = v12 << (32 - 8) | v12 >>> 8;
-    v11 += v12;
-    v6 ^= v11;
-    v6 = v6 << (32 - 7) | v6 >>> 7;
-    v0 += m7;
-    v0 += v5;
-    v15 ^= v0;
-    v15 = v15 << (32 - 8) | v15 >>> 8;
-    v10 += v15;
-    v5 ^= v10;
-    v5 = v5 << (32 - 7) | v5 >>> 7;
-
-    // Round 8.
-    v0 += m13;
-    v0 += v4;
-    v12 ^= v0;
-    v12 = v12 << (32 - 16) | v12 >>> 16;
-    v8 += v12;
-    v4 ^= v8;
-    v4 = v4 << (32 - 12) | v4 >>> 12;
-    v1 += m7;
-    v1 += v5;
-    v13 ^= v1;
-    v13 = v13 << (32 - 16) | v13 >>> 16;
-    v9 += v13;
-    v5 ^= v9;
-    v5 = v5 << (32 - 12) | v5 >>> 12;
-    v2 += m12;
-    v2 += v6;
-    v14 ^= v2;
-    v14 = v14 << (32 - 16) | v14 >>> 16;
-    v10 += v14;
-    v6 ^= v10;
-    v6 = v6 << (32 - 12) | v6 >>> 12;
-    v3 += m3;
-    v3 += v7;
-    v15 ^= v3;
-    v15 = v15 << (32 - 16) | v15 >>> 16;
-    v11 += v15;
-    v7 ^= v11;
-    v7 = v7 << (32 - 12) | v7 >>> 12;
-    v2 += m1;
-    v2 += v6;
-    v14 ^= v2;
-    v14 = v14 << (32 - 8) | v14 >>> 8;
-    v10 += v14;
-    v6 ^= v10;
-    v6 = v6 << (32 - 7) | v6 >>> 7;
-    v3 += m9;
-    v3 += v7;
-    v15 ^= v3;
-    v15 = v15 << (32 - 8) | v15 >>> 8;
-    v11 += v15;
-    v7 ^= v11;
-    v7 = v7 << (32 - 7) | v7 >>> 7;
-    v1 += m14;
-    v1 += v5;
-    v13 ^= v1;
-    v13 = v13 << (32 - 8) | v13 >>> 8;
-    v9 += v13;
-    v5 ^= v9;
-    v5 = v5 << (32 - 7) | v5 >>> 7;
-    v0 += m11;
-    v0 += v4;
-    v12 ^= v0;
-    v12 = v12 << (32 - 8) | v12 >>> 8;
-    v8 += v12;
-    v4 ^= v8;
-    v4 = v4 << (32 - 7) | v4 >>> 7;
-    v0 += m5;
-    v0 += v5;
-    v15 ^= v0;
-    v15 = v15 << (32 - 16) | v15 >>> 16;
-    v10 += v15;
-    v5 ^= v10;
-    v5 = v5 << (32 - 12) | v5 >>> 12;
-    v1 += m15;
-    v1 += v6;
-    v12 ^= v1;
-    v12 = v12 << (32 - 16) | v12 >>> 16;
-    v11 += v12;
-    v6 ^= v11;
-    v6 = v6 << (32 - 12) | v6 >>> 12;
-    v2 += m8;
-    v2 += v7;
-    v13 ^= v2;
-    v13 = v13 << (32 - 16) | v13 >>> 16;
-    v8 += v13;
-    v7 ^= v8;
-    v7 = v7 << (32 - 12) | v7 >>> 12;
-    v3 += m2;
-    v3 += v4;
-    v14 ^= v3;
-    v14 = v14 << (32 - 16) | v14 >>> 16;
-    v9 += v14;
-    v4 ^= v9;
-    v4 = v4 << (32 - 12) | v4 >>> 12;
-    v2 += m6;
-    v2 += v7;
-    v13 ^= v2;
-    v13 = v13 << (32 - 8) | v13 >>> 8;
-    v8 += v13;
-    v7 ^= v8;
-    v7 = v7 << (32 - 7) | v7 >>> 7;
-    v3 += m10;
-    v3 += v4;
-    v14 ^= v3;
-    v14 = v14 << (32 - 8) | v14 >>> 8;
-    v9 += v14;
-    v4 ^= v9;
-    v4 = v4 << (32 - 7) | v4 >>> 7;
-    v1 += m4;
-    v1 += v6;
-    v12 ^= v1;
-    v12 = v12 << (32 - 8) | v12 >>> 8;
-    v11 += v12;
-    v6 ^= v11;
-    v6 = v6 << (32 - 7) | v6 >>> 7;
-    v0 += m0;
-    v0 += v5;
-    v15 ^= v0;
-    v15 = v15 << (32 - 8) | v15 >>> 8;
-    v10 += v15;
-    v5 ^= v10;
-    v5 = v5 << (32 - 7) | v5 >>> 7;
-
-    // Round 9.
-    v0 += m6;
-    v0 += v4;
-    v12 ^= v0;
-    v12 = v12 << (32 - 16) | v12 >>> 16;
-    v8 += v12;
-    v4 ^= v8;
-    v4 = v4 << (32 - 12) | v4 >>> 12;
-    v1 += m14;
-    v1 += v5;
-    v13 ^= v1;
-    v13 = v13 << (32 - 16) | v13 >>> 16;
-    v9 += v13;
-    v5 ^= v9;
-    v5 = v5 << (32 - 12) | v5 >>> 12;
-    v2 += m11;
-    v2 += v6;
-    v14 ^= v2;
-    v14 = v14 << (32 - 16) | v14 >>> 16;
-    v10 += v14;
-    v6 ^= v10;
-    v6 = v6 << (32 - 12) | v6 >>> 12;
-    v3 += m0;
-    v3 += v7;
-    v15 ^= v3;
-    v15 = v15 << (32 - 16) | v15 >>> 16;
-    v11 += v15;
-    v7 ^= v11;
-    v7 = v7 << (32 - 12) | v7 >>> 12;
-    v2 += m3;
-    v2 += v6;
-    v14 ^= v2;
-    v14 = v14 << (32 - 8) | v14 >>> 8;
-    v10 += v14;
-    v6 ^= v10;
-    v6 = v6 << (32 - 7) | v6 >>> 7;
-    v3 += m8;
-    v3 += v7;
-    v15 ^= v3;
-    v15 = v15 << (32 - 8) | v15 >>> 8;
-    v11 += v15;
-    v7 ^= v11;
-    v7 = v7 << (32 - 7) | v7 >>> 7;
-    v1 += m9;
-    v1 += v5;
-    v13 ^= v1;
-    v13 = v13 << (32 - 8) | v13 >>> 8;
-    v9 += v13;
-    v5 ^= v9;
-    v5 = v5 << (32 - 7) | v5 >>> 7;
-    v0 += m15;
-    v0 += v4;
-    v12 ^= v0;
-    v12 = v12 << (32 - 8) | v12 >>> 8;
-    v8 += v12;
-    v4 ^= v8;
-    v4 = v4 << (32 - 7) | v4 >>> 7;
-    v0 += m12;
-    v0 += v5;
-    v15 ^= v0;
-    v15 = v15 << (32 - 16) | v15 >>> 16;
-    v10 += v15;
-    v5 ^= v10;
-    v5 = v5 << (32 - 12) | v5 >>> 12;
-    v1 += m13;
-    v1 += v6;
-    v12 ^= v1;
-    v12 = v12 << (32 - 16) | v12 >>> 16;
-    v11 += v12;
-    v6 ^= v11;
-    v6 = v6 << (32 - 12) | v6 >>> 12;
-    v2 += m1;
-    v2 += v7;
-    v13 ^= v2;
-    v13 = v13 << (32 - 16) | v13 >>> 16;
-    v8 += v13;
-    v7 ^= v8;
-    v7 = v7 << (32 - 12) | v7 >>> 12;
-    v3 += m10;
-    v3 += v4;
-    v14 ^= v3;
-    v14 = v14 << (32 - 16) | v14 >>> 16;
-    v9 += v14;
-    v4 ^= v9;
-    v4 = v4 << (32 - 12) | v4 >>> 12;
-    v2 += m4;
-    v2 += v7;
-    v13 ^= v2;
-    v13 = v13 << (32 - 8) | v13 >>> 8;
-    v8 += v13;
-    v7 ^= v8;
-    v7 = v7 << (32 - 7) | v7 >>> 7;
-    v3 += m5;
-    v3 += v4;
-    v14 ^= v3;
-    v14 = v14 << (32 - 8) | v14 >>> 8;
-    v9 += v14;
-    v4 ^= v9;
-    v4 = v4 << (32 - 7) | v4 >>> 7;
-    v1 += m7;
-    v1 += v6;
-    v12 ^= v1;
-    v12 = v12 << (32 - 8) | v12 >>> 8;
-    v11 += v12;
-    v6 ^= v11;
-    v6 = v6 << (32 - 7) | v6 >>> 7;
-    v0 += m2;
-    v0 += v5;
-    v15 ^= v0;
-    v15 = v15 << (32 - 8) | v15 >>> 8;
-    v10 += v15;
-    v5 ^= v10;
-    v5 = v5 << (32 - 7) | v5 >>> 7;
-
-    // Round 10.
-    v0 += m10;
-    v0 += v4;
-    v12 ^= v0;
-    v12 = v12 << (32 - 16) | v12 >>> 16;
-    v8 += v12;
-    v4 ^= v8;
-    v4 = v4 << (32 - 12) | v4 >>> 12;
-    v1 += m8;
-    v1 += v5;
-    v13 ^= v1;
-    v13 = v13 << (32 - 16) | v13 >>> 16;
-    v9 += v13;
-    v5 ^= v9;
-    v5 = v5 << (32 - 12) | v5 >>> 12;
-    v2 += m7;
-    v2 += v6;
-    v14 ^= v2;
-    v14 = v14 << (32 - 16) | v14 >>> 16;
-    v10 += v14;
-    v6 ^= v10;
-    v6 = v6 << (32 - 12) | v6 >>> 12;
-    v3 += m1;
-    v3 += v7;
-    v15 ^= v3;
-    v15 = v15 << (32 - 16) | v15 >>> 16;
-    v11 += v15;
-    v7 ^= v11;
-    v7 = v7 << (32 - 12) | v7 >>> 12;
-    v2 += m6;
-    v2 += v6;
-    v14 ^= v2;
-    v14 = v14 << (32 - 8) | v14 >>> 8;
-    v10 += v14;
-    v6 ^= v10;
-    v6 = v6 << (32 - 7) | v6 >>> 7;
-    v3 += m5;
-    v3 += v7;
-    v15 ^= v3;
-    v15 = v15 << (32 - 8) | v15 >>> 8;
-    v11 += v15;
-    v7 ^= v11;
-    v7 = v7 << (32 - 7) | v7 >>> 7;
-    v1 += m4;
-    v1 += v5;
-    v13 ^= v1;
-    v13 = v13 << (32 - 8) | v13 >>> 8;
-    v9 += v13;
-    v5 ^= v9;
-    v5 = v5 << (32 - 7) | v5 >>> 7;
-    v0 += m2;
-    v0 += v4;
-    v12 ^= v0;
-    v12 = v12 << (32 - 8) | v12 >>> 8;
-    v8 += v12;
-    v4 ^= v8;
-    v4 = v4 << (32 - 7) | v4 >>> 7;
-    v0 += m15;
-    v0 += v5;
-    v15 ^= v0;
-    v15 = v15 << (32 - 16) | v15 >>> 16;
-    v10 += v15;
-    v5 ^= v10;
-    v5 = v5 << (32 - 12) | v5 >>> 12;
-    v1 += m9;
-    v1 += v6;
-    v12 ^= v1;
-    v12 = v12 << (32 - 16) | v12 >>> 16;
-    v11 += v12;
-    v6 ^= v11;
-    v6 = v6 << (32 - 12) | v6 >>> 12;
-    v2 += m3;
-    v2 += v7;
-    v13 ^= v2;
-    v13 = v13 << (32 - 16) | v13 >>> 16;
-    v8 += v13;
-    v7 ^= v8;
-    v7 = v7 << (32 - 12) | v7 >>> 12;
-    v3 += m13;
-    v3 += v4;
-    v14 ^= v3;
-    v14 = v14 << (32 - 16) | v14 >>> 16;
-    v9 += v14;
-    v4 ^= v9;
-    v4 = v4 << (32 - 12) | v4 >>> 12;
-    v2 += m12;
-    v2 += v7;
-    v13 ^= v2;
-    v13 = v13 << (32 - 8) | v13 >>> 8;
-    v8 += v13;
-    v7 ^= v8;
-    v7 = v7 << (32 - 7) | v7 >>> 7;
-    v3 += m0;
-    v3 += v4;
-    v14 ^= v3;
-    v14 = v14 << (32 - 8) | v14 >>> 8;
-    v9 += v14;
-    v4 ^= v9;
-    v4 = v4 << (32 - 7) | v4 >>> 7;
-    v1 += m14;
-    v1 += v6;
-    v12 ^= v1;
-    v12 = v12 << (32 - 8) | v12 >>> 8;
-    v11 += v12;
-    v6 ^= v11;
-    v6 = (v6 << (32 - 7)) | (v6 >>> 7);
-    v0 += m11;
-    v0 += v5;
-    v15 ^= v0;
-    v15 = (v15 << (32 - 8)) | (v15 >>> 8);
-    v10 += v15;
-    v5 ^= v10;
-    v5 = (v5 << (32 - 7)) | (v5 >>> 7);
-
-    this.h[0] ^= v0 ^ v8;
-    this.h[1] ^= v1 ^ v9;
-    this.h[2] ^= v2 ^ v10;
-    this.h[3] ^= v3 ^ v11;
-    this.h[4] ^= v4 ^ v12;
-    this.h[5] ^= v5 ^ v13;
-    this.h[6] ^= v6 ^ v14;
-    this.h[7] ^= v7 ^ v15;
-  };
-
-  BLAKE2s.prototype.update = function(p, offset, length) {
-    if (typeof p === 'string')
-      throw new TypeError('update() accepts Uint8Array or an Array of bytes');
-    if (this.isFinished)
-      throw new Error('update() after calling digest()');
-
-    if (typeof offset === 'undefined') { offset = 0; }
-    if (typeof length === 'undefined') { length = p.length - offset; }
-
-    if (length === 0) return;
-
-
-    var i, left = 64 - this.nx;
-
-    // Finish buffer.
-    if (length > left) {
-      for (i = 0; i < left; i++) {
-        this.x[this.nx + i] = p[offset + i];
-      }
-      this.processBlock(64);
-      offset += left;
-      length -= left;
-      this.nx = 0;
-    }
-
-    // Process message blocks.
-    while (length > 64) {
-      for (i = 0; i < 64; i++) {
-        this.x[i] = p[offset + i];
-      }
-      this.processBlock(64);
-      offset += 64;
-      length -= 64;
-      this.nx = 0;
-    }
-
-    // Copy leftovers to buffer.
-    for (i = 0; i < length; i++) {
-      this.x[this.nx + i] = p[offset + i];
-    }
-    this.nx += length;
-  };
-
-  BLAKE2s.prototype.digest = function() {
-    var i;
-
-    if (this.isFinished) return this.result;
-
-    for (i = this.nx; i < 64; i++) this.x[i] = 0;
-
-    // Set last block flag.
-    this.f0 = 0xffffffff;
-
-    //TODO in tree mode, set f1 to 0xffffffff.
-    this.processBlock(this.nx);
-
-    var d = new Uint8Array(32);
-    for (i = 0; i < 8; i++) {
-      var h = this.h[i];
-      d[i * 4 + 0] = (h >>> 0) & 0xff;
-      d[i * 4 + 1] = (h >>> 8) & 0xff;
-      d[i * 4 + 2] = (h >>> 16) & 0xff;
-      d[i * 4 + 3] = (h >>> 24) & 0xff;
-    }
-    this.result = new Uint8Array(d.subarray(0, this.digestLength));
-    this.isFinished = true;
-    return this.result;
-  };
-
-  BLAKE2s.prototype.hexDigest = function() {
-    var hex = ['0', '1', '2', '3', '4', '5', '6', '7', '8', '9', 'a', 'b', 'c', 'd', 'e', 'f'];
-    var out = [];
-    var d = this.digest();
-    for (var i = 0; i < d.length; i++) {
-      out.push(hex[(d[i] >> 4) & 0xf]);
-      out.push(hex[d[i] & 0xf]);
-    }
-    return out.join('');
-  };
-
-  BLAKE2s.digestLength = MAX_DIGEST_LENGTH;
-  BLAKE2s.blockLength = BLOCK_LENGTH;
-  BLAKE2s.keyLength = MAX_KEY_LENGTH;
-
-  return BLAKE2s;
-
-})();
-
-if (typeof module !== 'undefined' && module.exports) module.exports = BLAKE2s;
 
 },{}],4:[function(require,module,exports){
+(function (root, factory) {
+    // Hack to make all exports of this module sha256 function object properties.
+    var exports = {};
+    factory(exports);
+    var sha256 = exports["default"];
+    for (var k in exports) {
+        sha256[k] = exports[k];
+    }
+        
+    if (typeof module === 'object' && typeof module.exports === 'object') {
+        module.exports = sha256;
+    } else if (typeof define === 'function' && define.amd) {
+        define(function() { return sha256; }); 
+    } else {
+        root.sha256 = sha256;
+    }
+})(this, function(exports) {
+"use strict";
+// SHA-256 (+ HMAC and PBKDF2) for JavaScript.
+//
+// Written in 2014-2016 by Dmitry Chestnykh.
+// Public domain, no warranty.
+//
+// Functions (accept and return Uint8Arrays):
+//
+//   sha256(message) -> hash
+//   sha256.hmac(key, message) -> mac
+//   sha256.pbkdf2(password, salt, rounds, dkLen) -> dk
+//
+//  Classes:
+//
+//   new sha256.Hash()
+//   new sha256.HMAC(key)
+//
+exports.digestLength = 32;
+exports.blockSize = 64;
+// SHA-256 constants
+var K = new Uint32Array([
+    0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5, 0x3956c25b,
+    0x59f111f1, 0x923f82a4, 0xab1c5ed5, 0xd807aa98, 0x12835b01,
+    0x243185be, 0x550c7dc3, 0x72be5d74, 0x80deb1fe, 0x9bdc06a7,
+    0xc19bf174, 0xe49b69c1, 0xefbe4786, 0x0fc19dc6, 0x240ca1cc,
+    0x2de92c6f, 0x4a7484aa, 0x5cb0a9dc, 0x76f988da, 0x983e5152,
+    0xa831c66d, 0xb00327c8, 0xbf597fc7, 0xc6e00bf3, 0xd5a79147,
+    0x06ca6351, 0x14292967, 0x27b70a85, 0x2e1b2138, 0x4d2c6dfc,
+    0x53380d13, 0x650a7354, 0x766a0abb, 0x81c2c92e, 0x92722c85,
+    0xa2bfe8a1, 0xa81a664b, 0xc24b8b70, 0xc76c51a3, 0xd192e819,
+    0xd6990624, 0xf40e3585, 0x106aa070, 0x19a4c116, 0x1e376c08,
+    0x2748774c, 0x34b0bcb5, 0x391c0cb3, 0x4ed8aa4a, 0x5b9cca4f,
+    0x682e6ff3, 0x748f82ee, 0x78a5636f, 0x84c87814, 0x8cc70208,
+    0x90befffa, 0xa4506ceb, 0xbef9a3f7, 0xc67178f2
+]);
+function hashBlocks(w, v, p, pos, len) {
+    var a, b, c, d, e, f, g, h, u, i, j, t1, t2;
+    while (len >= 64) {
+        a = v[0];
+        b = v[1];
+        c = v[2];
+        d = v[3];
+        e = v[4];
+        f = v[5];
+        g = v[6];
+        h = v[7];
+        for (i = 0; i < 16; i++) {
+            j = pos + i * 4;
+            w[i] = (((p[j] & 0xff) << 24) | ((p[j + 1] & 0xff) << 16) |
+                ((p[j + 2] & 0xff) << 8) | (p[j + 3] & 0xff));
+        }
+        for (i = 16; i < 64; i++) {
+            u = w[i - 2];
+            t1 = (u >>> 17 | u << (32 - 17)) ^ (u >>> 19 | u << (32 - 19)) ^ (u >>> 10);
+            u = w[i - 15];
+            t2 = (u >>> 7 | u << (32 - 7)) ^ (u >>> 18 | u << (32 - 18)) ^ (u >>> 3);
+            w[i] = (t1 + w[i - 7] | 0) + (t2 + w[i - 16] | 0);
+        }
+        for (i = 0; i < 64; i++) {
+            t1 = (((((e >>> 6 | e << (32 - 6)) ^ (e >>> 11 | e << (32 - 11)) ^
+                (e >>> 25 | e << (32 - 25))) + ((e & f) ^ (~e & g))) | 0) +
+                ((h + ((K[i] + w[i]) | 0)) | 0)) | 0;
+            t2 = (((a >>> 2 | a << (32 - 2)) ^ (a >>> 13 | a << (32 - 13)) ^
+                (a >>> 22 | a << (32 - 22))) + ((a & b) ^ (a & c) ^ (b & c))) | 0;
+            h = g;
+            g = f;
+            f = e;
+            e = (d + t1) | 0;
+            d = c;
+            c = b;
+            b = a;
+            a = (t1 + t2) | 0;
+        }
+        v[0] += a;
+        v[1] += b;
+        v[2] += c;
+        v[3] += d;
+        v[4] += e;
+        v[5] += f;
+        v[6] += g;
+        v[7] += h;
+        pos += 64;
+        len -= 64;
+    }
+    return pos;
+}
+// Hash implements SHA256 hash algorithm.
+var Hash = (function () {
+    function Hash() {
+        this.digestLength = exports.digestLength;
+        this.blockSize = exports.blockSize;
+        // Note: Int32Array is used instead of Uint32Array for performance reasons.
+        this.state = new Int32Array(8); // hash state
+        this.temp = new Int32Array(64); // temporary state
+        this.buffer = new Uint8Array(128); // buffer for data to hash
+        this.bufferLength = 0; // number of bytes in buffer
+        this.bytesHashed = 0; // number of total bytes hashed
+        this.finished = false; // indicates whether the hash was finalized
+        this.reset();
+    }
+    // Resets hash state making it possible
+    // to re-use this instance to hash other data.
+    Hash.prototype.reset = function () {
+        this.state[0] = 0x6a09e667;
+        this.state[1] = 0xbb67ae85;
+        this.state[2] = 0x3c6ef372;
+        this.state[3] = 0xa54ff53a;
+        this.state[4] = 0x510e527f;
+        this.state[5] = 0x9b05688c;
+        this.state[6] = 0x1f83d9ab;
+        this.state[7] = 0x5be0cd19;
+        this.bufferLength = 0;
+        this.bytesHashed = 0;
+        this.finished = false;
+        return this;
+    };
+    // Cleans internal buffers and re-initializes hash state.
+    Hash.prototype.clean = function () {
+        for (var i = 0; i < this.buffer.length; i++)
+            this.buffer[i] = 0;
+        for (var i = 0; i < this.temp.length; i++)
+            this.temp[i] = 0;
+        this.reset();
+    };
+    // Updates hash state with the given data.
+    //
+    // Optionally, length of the data can be specified to hash
+    // fewer bytes than data.length.
+    //
+    // Throws error when trying to update already finalized hash:
+    // instance must be reset to use it again.
+    Hash.prototype.update = function (data, dataLength) {
+        if (dataLength === void 0) { dataLength = data.length; }
+        if (this.finished) {
+            throw new Error("SHA256: can't update because hash was finished.");
+        }
+        var dataPos = 0;
+        this.bytesHashed += dataLength;
+        if (this.bufferLength > 0) {
+            while (this.bufferLength < 64 && dataLength > 0) {
+                this.buffer[this.bufferLength++] = data[dataPos++];
+                dataLength--;
+            }
+            if (this.bufferLength === 64) {
+                hashBlocks(this.temp, this.state, this.buffer, 0, 64);
+                this.bufferLength = 0;
+            }
+        }
+        if (dataLength >= 64) {
+            dataPos = hashBlocks(this.temp, this.state, data, dataPos, dataLength);
+            dataLength %= 64;
+        }
+        while (dataLength > 0) {
+            this.buffer[this.bufferLength++] = data[dataPos++];
+            dataLength--;
+        }
+        return this;
+    };
+    // Finalizes hash state and puts hash into out.
+    //
+    // If hash was already finalized, puts the same value.
+    Hash.prototype.finish = function (out) {
+        if (!this.finished) {
+            var bytesHashed = this.bytesHashed;
+            var left = this.bufferLength;
+            var bitLenHi = (bytesHashed / 0x20000000) | 0;
+            var bitLenLo = bytesHashed << 3;
+            var padLength = (bytesHashed % 64 < 56) ? 64 : 128;
+            this.buffer[left] = 0x80;
+            for (var i = left + 1; i < padLength - 8; i++) {
+                this.buffer[i] = 0;
+            }
+            this.buffer[padLength - 8] = (bitLenHi >>> 24) & 0xff;
+            this.buffer[padLength - 7] = (bitLenHi >>> 16) & 0xff;
+            this.buffer[padLength - 6] = (bitLenHi >>> 8) & 0xff;
+            this.buffer[padLength - 5] = (bitLenHi >>> 0) & 0xff;
+            this.buffer[padLength - 4] = (bitLenLo >>> 24) & 0xff;
+            this.buffer[padLength - 3] = (bitLenLo >>> 16) & 0xff;
+            this.buffer[padLength - 2] = (bitLenLo >>> 8) & 0xff;
+            this.buffer[padLength - 1] = (bitLenLo >>> 0) & 0xff;
+            hashBlocks(this.temp, this.state, this.buffer, 0, padLength);
+            this.finished = true;
+        }
+        for (var i = 0; i < 8; i++) {
+            out[i * 4 + 0] = (this.state[i] >>> 24) & 0xff;
+            out[i * 4 + 1] = (this.state[i] >>> 16) & 0xff;
+            out[i * 4 + 2] = (this.state[i] >>> 8) & 0xff;
+            out[i * 4 + 3] = (this.state[i] >>> 0) & 0xff;
+        }
+        return this;
+    };
+    // Returns the final hash digest.
+    Hash.prototype.digest = function () {
+        var out = new Uint8Array(this.digestLength);
+        this.finish(out);
+        return out;
+    };
+    // Internal function for use in HMAC for optimization.
+    Hash.prototype._saveState = function (out) {
+        for (var i = 0; i < this.state.length; i++) {
+            out[i] = this.state[i];
+        }
+    };
+    // Internal function for use in HMAC for optimization.
+    Hash.prototype._restoreState = function (from, bytesHashed) {
+        for (var i = 0; i < this.state.length; i++) {
+            this.state[i] = from[i];
+        }
+        this.bytesHashed = bytesHashed;
+        this.finished = false;
+        this.bufferLength = 0;
+    };
+    return Hash;
+}());
+exports.Hash = Hash;
+// HMAC implements HMAC-SHA256 message authentication algorithm.
+var HMAC = (function () {
+    function HMAC(key) {
+        this.inner = new Hash();
+        this.outer = new Hash();
+        this.blockSize = this.inner.blockSize;
+        this.digestLength = this.inner.digestLength;
+        var pad = new Uint8Array(this.blockSize);
+        if (key.length > this.blockSize) {
+            (new Hash()).update(key).finish(pad).clean();
+        }
+        else {
+            for (var i = 0; i < key.length; i++) {
+                pad[i] = key[i];
+            }
+        }
+        for (var i = 0; i < pad.length; i++) {
+            pad[i] ^= 0x36;
+        }
+        this.inner.update(pad);
+        for (var i = 0; i < pad.length; i++) {
+            pad[i] ^= 0x36 ^ 0x5c;
+        }
+        this.outer.update(pad);
+        this.istate = new Uint32Array(this.digestLength / 4);
+        this.ostate = new Uint32Array(this.digestLength / 4);
+        this.inner._saveState(this.istate);
+        this.outer._saveState(this.ostate);
+        for (var i = 0; i < pad.length; i++) {
+            pad[i] = 0;
+        }
+    }
+    // Returns HMAC state to the state initialized with key
+    // to make it possible to run HMAC over the other data with the same
+    // key without creating a new instance.
+    HMAC.prototype.reset = function () {
+        this.inner._restoreState(this.istate, this.inner.blockSize);
+        this.outer._restoreState(this.ostate, this.outer.blockSize);
+        return this;
+    };
+    // Cleans HMAC state.
+    HMAC.prototype.clean = function () {
+        for (var i = 0; i < this.istate.length; i++) {
+            this.ostate[i] = this.istate[i] = 0;
+        }
+        this.inner.clean();
+        this.outer.clean();
+    };
+    // Updates state with provided data.
+    HMAC.prototype.update = function (data) {
+        this.inner.update(data);
+        return this;
+    };
+    // Finalizes HMAC and puts the result in out.
+    HMAC.prototype.finish = function (out) {
+        if (this.outer.finished) {
+            this.outer.finish(out);
+        }
+        else {
+            this.inner.finish(out);
+            this.outer.update(out, this.digestLength).finish(out);
+        }
+        return this;
+    };
+    // Returns message authentication code.
+    HMAC.prototype.digest = function () {
+        var out = new Uint8Array(this.digestLength);
+        this.finish(out);
+        return out;
+    };
+    return HMAC;
+}());
+exports.HMAC = HMAC;
+// Returns SHA256 hash of data.
+function hash(data) {
+    var h = (new Hash()).update(data);
+    var digest = h.digest();
+    h.clean();
+    return digest;
+}
+exports.hash = hash;
+exports.__esModule = true;
+exports["default"] = hash;
+// Returns HMAC-SHA256 of data under the key.
+function hmac(key, data) {
+    var h = (new HMAC(key)).update(data);
+    var digest = h.digest();
+    h.clean();
+    return digest;
+}
+exports.hmac = hmac;
+// Derives a key from password and salt using PBKDF2-HMAC-SHA256
+// with the given number of iterations.
+//
+// The number of bytes returned is equal to dkLen.
+//
+// (For better security, avoid dkLen greater than hash length - 32 bytes).
+function pbkdf2(password, salt, iterations, dkLen) {
+    var prf = new HMAC(password);
+    var len = prf.digestLength;
+    var ctr = new Uint8Array(4);
+    var t = new Uint8Array(len);
+    var u = new Uint8Array(len);
+    var dk = new Uint8Array(dkLen);
+    for (var i = 0; i * len < dkLen; i++) {
+        var c = i + 1;
+        ctr[0] = (c >>> 24) & 0xff;
+        ctr[1] = (c >>> 16) & 0xff;
+        ctr[2] = (c >>> 8) & 0xff;
+        ctr[3] = (c >>> 0) & 0xff;
+        prf.reset();
+        prf.update(salt);
+        prf.update(ctr);
+        prf.finish(u);
+        for (var j = 0; j < len; j++) {
+            t[j] = u[j];
+        }
+        for (var j = 2; j <= iterations; j++) {
+            prf.reset();
+            prf.update(u).finish(u);
+            for (var k = 0; k < len; k++) {
+                t[k] ^= u[k];
+            }
+        }
+        for (var j = 0; j < len && i * len + j < dkLen; j++) {
+            dk[i * len + j] = t[j];
+        }
+    }
+    for (var i = 0; i < len; i++) {
+        t[i] = u[i] = 0;
+    }
+    for (var i = 0; i < 4; i++) {
+        ctr[i] = 0;
+    }
+    prf.clean();
+    return dk;
+}
+exports.pbkdf2 = pbkdf2;
+});
 
 },{}],5:[function(require,module,exports){
 /*!
  * Fast "async" scrypt implementation in JavaScript.
- * Copyright (c) 2013-2015 Dmitry Chestnykh | BSD License
+ * Copyright (c) 2013-2016 Dmitry Chestnykh | BSD License
  * https://github.com/dchest/scrypt-async-js
  */
 
-/*
- * Limitation: doesn't support parallelization parameter greater than 1.
- */
-
 /**
- * scrypt(password, salt, logN, r, dkLen, [interruptStep], callback, [encoding])
+ * scrypt(password, salt, options, callback)
+ *
+ * where
+ *
+ * password and salt are strings or arrays of bytes (Array of Uint8Array)
+ * options is
+ *
+ * {
+ *    N:      // CPU/memory cost parameter, must be power of two
+ *            // (alternatively, you can specify logN)
+ *    r:      // block size
+ *    p:      // parallelization parameter
+ *    dkLen:  // length of derived key, default = 32
+ *    encoding: // optional encoding:
+ *                    "base64" - standard Base64 encoding
+ *                    "hex" — hex encoding,
+ *                    "binary" — Uint8Array,
+ *                    undefined/null - Array of bytes
+ *    interruptStep: // optional, steps to split calculations (default is 0)
+ * }
  *
  * Derives a key from password and salt and calls callback
  * with derived key as the only argument.
  *
  * Calculations are interrupted with setImmediate (or zero setTimeout) at the
- * given interruptSteps to avoid freezing the browser. If interruptStep is not
- * given, it defaults to 1000. If it's zero, the callback is called immediately
- * after the calculation, avoiding setImmediate.
+ * given interruptSteps to avoid freezing the browser. If it's undefined or zero,
+ * the callback is called immediately after the calculation, avoiding setImmediate.
  *
- * @param {string|Array.<number>} password Password.
- * @param {string|Array.<number>} salt Salt.
- * @param {number}  logN  CPU/memory cost parameter (1 to 31).
- * @param {number}  r     Block size parameter.
- * @param {number}  dkLen Length of derived key.
- * @param {number?} interruptStep (optional) Steps to split calculation with timeouts (default 1000).
- * @param {function(string|Array.<number>)} callback Callback function.
- * @param {string?} encoding (optional) Result encoding ("base64", "hex", or null).
+ * Legacy way (only supports p = 1) to call this function is:
+ *
+ * scrypt(password, salt, logN, r, dkLen, [interruptStep], callback, [encoding])
+ *
+ * In legacy API, if interruptStep is not given, it defaults to 1000.
+ * Pass 0 to have callback called immediately.
  *
  */
 function scrypt(password, salt, logN, r, dkLen, interruptStep, callback, encoding) {
@@ -1888,17 +996,53 @@ function scrypt(password, salt, logN, r, dkLen, interruptStep, callback, encodin
 
   // Generate key.
 
-  // Set parallelization parameter to 1.
-  var p = 1;
+  var MAX_UINT = (-1)>>>0,
+      p = 1;
+
+  if (typeof logN === "object") {
+    // Called as: scrypt(password, salt, opts, callback)
+    if (arguments.length > 4) {
+      throw new Error('scrypt: incorrect number of arguments');
+    }
+
+    var opts = logN;
+
+    callback = r;
+    logN = opts.logN;
+    if (typeof logN === 'undefined') {
+      if (typeof opts.N !== 'undefined') {
+        if (opts.N < 2 || opts.N > MAX_UINT)
+          throw new Error('scrypt: N is out of range');
+
+        if ((opts.N & (opts.N - 1)) !== 0)
+          throw new Error('scrypt: N is not a power of 2');
+
+        logN = Math.log(opts.N) / Math.LN2;
+      } else {
+        throw new Error('scrypt: missing N parameter');
+      }
+    }
+    p = opts.p || 1;
+    r = opts.r;
+    dkLen = opts.dkLen || 32;
+    interruptStep = opts.interruptStep || 0;
+    encoding = opts.encoding;
+  }
+
+  if (p < 1)
+    throw new Error('scrypt: invalid p');
+
+  if (r <= 0)
+    throw new Error('scrypt: invalid r');
 
   if (logN < 1 || logN > 31)
-    throw new Error('scrypt: logN not be between 1 and 31');
+    throw new Error('scrypt: logN must be between 1 and 31');
 
-  var MAX_INT = (1<<31)>>>0,
-      N = (1<<logN)>>>0,
+
+  var N = (1<<logN)>>>0,
       XY, V, B, tmp;
 
-  if (r*p >= 1<<30 || r > MAX_INT/128/p || r > MAX_INT/256 || N > MAX_INT/128/r)
+  if (r*p >= 1<<30 || r > MAX_UINT/128/p || r > MAX_UINT/256 || N > MAX_UINT/128/r)
     throw new Error('scrypt: parameters are too large');
 
   // Decode strings.
@@ -1921,9 +1065,9 @@ function scrypt(password, salt, logN, r, dkLen, interruptStep, callback, encodin
 
   var xi = 0, yi = 32 * r;
 
-  function smixStart() {
+  function smixStart(pos) {
     for (var i = 0; i < 32*r; i++) {
-      var j = i*4;
+      var j = pos + i*4;
       XY[xi+i] = ((B[j+3] & 0xff)<<24) | ((B[j+2] & 0xff)<<16) |
                  ((B[j+1] & 0xff)<<8)  | ((B[j+0] & 0xff)<<0);
     }
@@ -1951,13 +1095,13 @@ function scrypt(password, salt, logN, r, dkLen, interruptStep, callback, encodin
     }
   }
 
-  function smixFinish() {
+  function smixFinish(pos) {
     for (var i = 0; i < 32*r; i++) {
       var j = XY[xi+i];
-      B[i*4+0] = (j>>>0)  & 0xff;
-      B[i*4+1] = (j>>>8)  & 0xff;
-      B[i*4+2] = (j>>>16) & 0xff;
-      B[i*4+3] = (j>>>24) & 0xff;
+      B[pos + i*4 + 0] = (j>>>0)  & 0xff;
+      B[pos + i*4 + 1] = (j>>>8)  & 0xff;
+      B[pos + i*4 + 2] = (j>>>16) & 0xff;
+      B[pos + i*4 + 3] = (j>>>24) & 0xff;
     }
   }
 
@@ -1982,8 +1126,36 @@ function scrypt(password, salt, logN, r, dkLen, interruptStep, callback, encodin
         return bytesToBase64(result);
       else if (enc === 'hex')
         return bytesToHex(result);
+      else if (enc === 'binary')
+        return new Uint8Array(result);
       else
         return result;
+  }
+
+  // Blocking variant.
+  function calculateSync() {
+    for (var i = 0; i < p; i++) {
+      smixStart(i*128*r);
+      smixStep1(0, N);
+      smixStep2(0, N);
+      smixFinish(i*128*r);
+    }
+    callback(getResult(encoding));
+  }
+
+  // Async variant.
+  function calculateAsync(i) {
+      smixStart(i*128*r);
+      interruptedFor(0, N, interruptStep*2, smixStep1, function() {
+        interruptedFor(0, N, interruptStep*2, smixStep2, function () {
+          smixFinish(i*128*r);
+          if (i + 1 < p) {
+            nextTick(function() { calculateAsync(i + 1); });
+          } else {
+            callback(getResult(encoding));
+          }
+        });
+      });
   }
 
   if (typeof interruptStep === 'function') {
@@ -1995,26 +1167,9 @@ function scrypt(password, salt, logN, r, dkLen, interruptStep, callback, encodin
   }
 
   if (interruptStep <= 0) {
-    //
-    // Blocking async variant, calls callback.
-    //
-    smixStart();
-    smixStep1(0, N);
-    smixStep2(0, N);
-    smixFinish();
-    callback(getResult(encoding));
-
+    calculateSync();
   } else {
-    //
-    // Async variant with interruptions, calls callback.
-    //
-    smixStart();
-    interruptedFor(0, N, interruptStep*2, smixStep1, function() {
-      interruptedFor(0, N, interruptStep*2, smixStep2, function () {
-        smixFinish();
-        callback(getResult(encoding));
-      });
-    });
+    calculateAsync(0);
   }
 }
 
@@ -2768,7 +1923,7 @@ poly1305.prototype.finish = function(mac, macpos) {
   }
   g[9] -= (1 << 13);
 
-  mask = (g[9] >>> ((2 * 8) - 1)) - 1;
+  mask = (c ^ 1) - 1;
   for (i = 0; i < 10; i++) g[i] &= mask;
   mask = ~mask;
   for (i = 0; i < 10; i++) this.h[i] = (this.h[i] & mask) | g[i];
@@ -4410,5 +3565,5 @@ nacl.setPRNG = function(fn) {
 
 })(typeof module !== 'undefined' && module.exports ? module.exports : (self.nacl = self.nacl || {}));
 
-},{"crypto":4}]},{},[1])(1)
+},{"crypto":3}]},{},[1])(1)
 });

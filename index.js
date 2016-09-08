@@ -1,80 +1,146 @@
-var BLAKE2s = require('blake2s-js')
+var sha256 = require('fast-sha256')
 var scrypt = require('scrypt-async')
 var nacl = require('tweetnacl')
 var base64 = require('base64-js')
 
 // Code inspired by:
 // https://github.com/kaepora/miniLock/blob/master/src/js/miniLock.js
+// https://github.com/jo/session25519
 
 // Extracted from tweetnacl-util-js
 // https://github.com/dchest/tweetnacl-util-js/blob/master/nacl-util.js#L16
-function decodeUTF8 (s) {
+function decodeUTF8(s) {
   var i, d = unescape(encodeURIComponent(s)), b = new Uint8Array(d.length)
   for (i = 0; i < d.length; i++) b[i] = d.charCodeAt(i)
   return b
 }
 
+// Convert a decimal to hex with proper padding
 // Input:
-//   key                      // User key hash (Uint8Array)
-//   salt                     // Salt (email or username) (Uint8Array)
-//   logN              = 17   // CPU/memory cost parameter (Integer 1 to 31)
-//   r                 = 8    // Block size parameter
-//   dkLen             = 64   // Length of derived key in Bytes
-//   interruptStep     = 1000 // Steps to split calculation with timeouts
-//   callback function
+//   d                      // A decimal number between 0-255
 //
 // Result:
-//   Returns 64 bytes of scrypt derived key material in an Array,
-//   which is then passed to the callback.
+//   Returns a padded hex string representing the decimal arg
 //
-function getScryptKey (key, salt, logN, r, dkLen, interruptStep, callback) {
-  'use strict'
+function decToHex(d) {
+  var hex = Number(d).toString(16)
+  while (hex.length < 2) {
+    hex = "0" + hex
+  }
+  return hex;
+}
 
-  scrypt(key, salt, logN, r, dkLen, interruptStep, function (keyBytes) {
-    return callback(keyBytes)
-  }, null)
+// Convert Uint8Array of bytes to hex
+// Input:
+//   arr                      // Uint8Array of bytes to convert to hex
+//
+// Result:
+//   Returns a Base16 hex encoded version of arr
+//
+function byteArrayToHex(arr) {
+  hex = ''
+  for (i = 0; i < arr.length; ++i) {
+    hex += decToHex(arr[i])
+  }
+  return hex
 }
 
 // Input:
-//  email       // A UTF-8 username or email
+//   key                      // User key hash (Uint8Array)
+//   salt                     // Salt (username or email) (Uint8Array)
+//   callback function
+//
+// Result:
+//   Returns 256 bytes of scrypt derived key material in a Uint8Array,
+//   which is then passed to the callback.
+//
+function getScryptKey(key, salt, callback) {
+  'use strict'
+
+  scrypt(key, salt, {
+    N: 16384,
+    r: 8,
+    p: 1,
+    dkLen: 256,
+    encoding: 'binary'
+  }, function(derivedKey) {
+    return callback(derivedKey)  
+  })
+}
+
+// Input:
+//  id          // A UTF-8 username or email
 //  password    // A UTF-8 passphrase
 //  callback    // A callback function
 //
 // Result:
-//   An object literal with keys
+//   An object literal with all key material
 //
-module.exports = function session (email, password, callback) {
+module.exports = function (id, password, callback) {
   'use strict'
 
-  // A 32 Byte BLAKE2s hash of the password bytes
-  var keyHash = new BLAKE2s()
-  keyHash.update(decodeUTF8(password))
-  var scryptKey = keyHash.digest()
+  var idSha256Bbytes, idSha256Hex, scryptKey, scryptSalt, byteKeys,
+      hexKeys, naclEncryptionKeyPairs, naclEncryptionKeyPairsBase64,
+      naclSigningKeyPairs, naclSigningKeyPairsBase64, out
 
-  getScryptKey(scryptKey, email, 17, 8, 64, 1000, function (scryptByteArray) {
+  idSha256Bbytes = sha256(decodeUTF8(id))
+  idSha256Hex = byteArrayToHex(idSha256Bbytes)
+
+  scryptKey = sha256(decodeUTF8(password))
+  scryptSalt = sha256(decodeUTF8([idSha256Hex, idSha256Hex.length, 'session_keys'].join('')))
+
+  getScryptKey(scryptKey, scryptSalt, function (scryptByteArray) {
     try {
-      var keys, seedBytesUint8Array, boxKeyPairSeed,
-        signKeyPairSeed, signKeyPair
+      byteKeys = []
+      hexKeys = []
+      naclEncryptionKeyPairs = []
+      naclEncryptionKeyPairsBase64 = []
+      naclSigningKeyPairs = []
+      naclSigningKeyPairsBase64 = []
 
-      // Convert scrypt Array of Bytes to Uint8Array
-      seedBytesUint8Array = new Uint8Array(scryptByteArray)
+      // Generate 8 pairs of all types of keys. The key types
+      // at each Array index are all derived from the same key
+      // bytes. Use different Array index values for each to ensure
+      // they don't share common key bytes. For example:
+      //
+      // uuid : output.hexKeys[0]
+      // encryption keypair : output.naclEncryptionKeyPairs[1]
+      // signing keypair : output.naclSigningKeyPairs[2]
+      //
+      var b = 0
+      for (var i = 0; i < 8; ++i) {
+        var byteArr = scryptByteArray.subarray(b, b + 32)
+        byteKeys.push(byteArr)
+        hexKeys.push(byteArrayToHex(byteArr))
 
-      // First 32 Bytes of scrypt seed for encryption keys
-      // Note : first 32 Bytes are the same for dkLen 32 (old way) and 64!
-      boxKeyPairSeed = seedBytesUint8Array.subarray(0, 32)
-      keys = nacl.box.keyPair.fromSecretKey(boxKeyPairSeed)
-      keys.publicKeyBase64 = base64.fromByteArray(keys.publicKey)
-      keys.secretKeyBase64 = base64.fromByteArray(keys.secretKey)
+        var naclEncryptionKeyPair = nacl.box.keyPair.fromSecretKey(byteArr)
+        var naclSigningKeyPair = nacl.sign.keyPair.fromSeed(byteArr)
 
-      // Last 32 Bytes of scrypt seed for signing keys
-      signKeyPairSeed = seedBytesUint8Array.subarray(32, 64)
-      signKeyPair = nacl.sign.keyPair.fromSeed(signKeyPairSeed)
-      keys.publicSignKey = signKeyPair.publicKey
-      keys.publicSignKeyBase64 = base64.fromByteArray(signKeyPair.publicKey)
-      keys.secretSignKey = signKeyPair.secretKey
-      keys.secretSignKeyBase64 = base64.fromByteArray(signKeyPair.secretKey)
+        naclEncryptionKeyPairs.push(naclEncryptionKeyPair)
+        naclEncryptionKeyPairsBase64.push({
+          secretKey: base64.fromByteArray(naclEncryptionKeyPair.secretKey),
+          publicKey: base64.fromByteArray(naclEncryptionKeyPair.publicKey)
+        })
 
-      return callback(null, keys)
+        naclSigningKeyPairs.push(naclSigningKeyPair)
+        naclSigningKeyPairsBase64.push({
+          secretKey: base64.fromByteArray(naclSigningKeyPair.secretKey),
+          publicKey: base64.fromByteArray(naclSigningKeyPair.publicKey)
+        })
+
+        b += 32
+      }
+
+      out = {}
+      out.id = idSha256Hex
+      out.byteKeys = byteKeys
+      out.hexKeys = hexKeys
+      out.naclEncryptionKeyPairs = naclEncryptionKeyPairs
+      out.naclEncryptionKeyPairsBase64 = naclEncryptionKeyPairsBase64
+      out.naclSigningKeyPairs = naclSigningKeyPairs
+      out.naclSigningKeyPairsBase64 = naclSigningKeyPairsBase64
+
+      return callback(null, out)
     } catch (err) {
       return callback(err)
     }

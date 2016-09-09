@@ -5,7 +5,7 @@
   "main": "index.js",
   "scripts": {
     "test": "tape test/*.js",
-    "test_browser": "rm -f test_browser/test_bundle.js && browserify test/*.js > test_browser/test_bundle.js && open test_browser/test.html",
+    "test-browser": "rm -f test_browser/test_bundle.js && browserify test/*.js > test_browser/test_bundle.js && open test_browser/test.html",
     "build": "browserify index.js --standalone sessionKeys > dist/sessionKeys.js"
   },
   "repository": {
@@ -15,13 +15,18 @@
   "keywords": [
     "cryptography",
     "public key",
+    "private key",
     "keypairs",
+    "signatures",
     "security",
     "SHA256",
     "NaCl",
+    "TweetNaCl",
     "Curve25519",
     "ed25519",
-    "scrypt"
+    "scrypt",
+    "password",
+    "passphrase"
   ],
   "author": "Glenn Rempe <glenn@rempe.us> (https://www.rempe.us/)",
   "license": "MIT",
@@ -44,6 +49,7 @@
     "eslint-plugin-promise": "^2.0.1",
     "eslint-plugin-standard": "^2.0.0",
     "tap-spec": "^4.1.1",
-    "tape": "^4.0.0"
+    "tape": "^4.0.0",
+    "watchify": "^3.7.0"
   }
 }

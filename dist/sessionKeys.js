@@ -10,8 +10,11 @@ var base64 = require('base64-js')
 
 // Extracted from tweetnacl-util-js
 // https://github.com/dchest/tweetnacl-util-js/blob/master/nacl-util.js#L16
-function decodeUTF8(s) {
-  var i, d = unescape(encodeURIComponent(s)), b = new Uint8Array(d.length)
+function decodeUTF8 (s) {
+  var i, d, b
+  d = unescape(encodeURIComponent(s))
+  b = new Uint8Array(d.length)
+
   for (i = 0; i < d.length; i++) b[i] = d.charCodeAt(i)
   return b
 }
@@ -23,12 +26,12 @@ function decodeUTF8(s) {
 // Result:
 //   Returns a padded hex string representing the decimal arg
 //
-function decToHex(d) {
+function decToHex (d) {
   var hex = Number(d).toString(16)
   while (hex.length < 2) {
-    hex = "0" + hex
+    hex = '0' + hex
   }
-  return hex;
+  return hex
 }
 
 // Convert Uint8Array of bytes to hex
@@ -38,7 +41,8 @@ function decToHex(d) {
 // Result:
 //   Returns a Base16 hex encoded version of arr
 //
-function byteArrayToHex(arr) {
+function byteArrayToHex (arr) {
+  var hex, i
   hex = ''
   for (i = 0; i < arr.length; ++i) {
     hex += decToHex(arr[i])
@@ -55,7 +59,7 @@ function byteArrayToHex(arr) {
 //   Returns 256 bytes of scrypt derived key material in a Uint8Array,
 //   which is then passed to the callback.
 //
-function getScryptKey(key, salt, callback) {
+function getScryptKey (key, salt, callback) {
   'use strict'
 
   scrypt(key, salt, {
@@ -64,8 +68,8 @@ function getScryptKey(key, salt, callback) {
     p: 1,
     dkLen: 256,
     encoding: 'binary'
-  }, function(derivedKey) {
-    return callback(derivedKey)  
+  }, function (derivedKey) {
+    return callback(derivedKey)
   })
 }
 
@@ -81,8 +85,8 @@ module.exports = function (id, password, callback) {
   'use strict'
 
   var idSha256Bbytes, idSha256Hex, scryptKey, scryptSalt, byteKeys,
-      hexKeys, naclEncryptionKeyPairs, naclEncryptionKeyPairsBase64,
-      naclSigningKeyPairs, naclSigningKeyPairsBase64, out
+    hexKeys, naclEncryptionKeyPairs, naclEncryptionKeyPairsBase64,
+    naclSigningKeyPairs, naclSigningKeyPairsBase64, out
 
   idSha256Bbytes = sha256(decodeUTF8(id))
   idSha256Hex = byteArrayToHex(idSha256Bbytes)

@@ -192,7 +192,7 @@ npm test
 
 # run all tests locally from test.html in your default browser
 # test output will be in your browser's console.
-npm run test_browser
+npm run test-browser
 ```
 
 ### Installation Security : Signed Git Commits

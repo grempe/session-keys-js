@@ -1,7 +1,7 @@
 {
   "name": "session-keys",
   "version": "2.0.0",
-  "description": "Derives NaCl compatible public and private encryption keys, symetric encryption keys, and digital signature keys from an ID and password using SHA256, scrypt, and TweetNaCl.js.",
+  "description": "Derives NaCl compatible public and private encryption keys, symmetric encryption keys, and digital signature keys from an ID and password using SHA256, scrypt, and TweetNaCl.js.",
   "main": "index.js",
   "scripts": {
     "test": "tape test/*.js",

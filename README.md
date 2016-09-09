@@ -72,7 +72,9 @@ representations.
 
 
 ```js
-sessionKeys('user@example.com', 'my secret password', function(err, keys) {
+var sessionKeys = require('session-keys')
+
+sessionKeys.generate('user@example.com', 'my secret password', function(err, keys) {
   // {
   //   id: "0123456789abcdef",
   //   byteKeys: [...],

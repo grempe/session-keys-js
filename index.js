@@ -80,7 +80,7 @@ function getScryptKey (key, salt, callback) {
 // Result:
 //   An object literal with all key material
 //
-module.exports = function (id, password, callback) {
+exports.generate = function (id, password, callback) {
   'use strict'
 
   var idSha256Bbytes, idSha256Hex, scryptKey, scryptSalt, byteKeys,

@@ -13,7 +13,7 @@ var base64 = require('base64-js')
 // INTERACTIVE
 
 test('interactive test', function (t) {
-  sessionKeys('user@example.com', 'pet sprain our trial patch bg', function (err, key) {
+  sessionKeys.generate('user@example.com', 'pet sprain our trial patch bg', function (err, key) {
     t.plan(7)
 
     t.notOk(err, 'interactive no error')
@@ -28,7 +28,7 @@ test('interactive test', function (t) {
 })
 
 test('interactive id test', function (t) {
-  sessionKeys('user@example.com', 'pet sprain our trial patch bg', function (err, key) {
+  sessionKeys.generate('user@example.com', 'pet sprain our trial patch bg', function (err, key) {
     t.plan(2)
 
     t.notOk(err, 'interactive id no error')
@@ -38,7 +38,7 @@ test('interactive id test', function (t) {
 })
 
 test('interactive byteKeys test', function (t) {
-  sessionKeys('user@example.com', 'pet sprain our trial patch bg', function (err, key) {
+  sessionKeys.generate('user@example.com', 'pet sprain our trial patch bg', function (err, key) {
     t.plan(2)
 
     t.notOk(err, 'interactive byteKeys no error')
@@ -59,7 +59,7 @@ test('interactive byteKeys test', function (t) {
 })
 
 test('interactive hexKeys test', function (t) {
-  sessionKeys('user@example.com', 'pet sprain our trial patch bg', function (err, key) {
+  sessionKeys.generate('user@example.com', 'pet sprain our trial patch bg', function (err, key) {
     t.plan(2)
 
     t.notOk(err, 'interactive hexKeys no error')
@@ -80,7 +80,7 @@ test('interactive hexKeys test', function (t) {
 })
 
 test('interactive naclEncryptionKeyPairsBase64 test', function (t) {
-  sessionKeys('user@example.com', 'pet sprain our trial patch bg', function (err, key) {
+  sessionKeys.generate('user@example.com', 'pet sprain our trial patch bg', function (err, key) {
     t.plan(2)
 
     t.notOk(err, 'interactive naclEncryptionKeyPairsBase64 no error')
@@ -101,7 +101,7 @@ test('interactive naclEncryptionKeyPairsBase64 test', function (t) {
 })
 
 test('interactive naclSigningKeyPairsBase64 test', function (t) {
-  sessionKeys('user@example.com', 'pet sprain our trial patch bg', function (err, key) {
+  sessionKeys.generate('user@example.com', 'pet sprain our trial patch bg', function (err, key) {
     t.plan(9)
 
     t.notOk(err, 'interactive naclSigningKeyPairsBase64 no error')

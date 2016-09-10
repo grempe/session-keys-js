@@ -2,6 +2,8 @@
 
 [![js-standard-style](https://cdn.rawgit.com/feross/standard/master/badge.svg)](https://github.com/feross/standard)
 
+[![Build Status](https://travis-ci.org/grempe/session-keys-js.svg?branch=master)](https://travis-ci.org/grempe/session-keys-js)
+
 `sessionKeys` is a cryptographic tool for the generation of unique user IDs,
 and NaCl compatible [Curve25519](https://cr.yp.to/ecdh.html) encryption, and
 [Ed25519](http://ed25519.cr.yp.to) digital signature keys using JavaScript.
@@ -30,7 +32,7 @@ the `scrypt` key derivation function.
 The benefit of this approach are manifold:
 
 - Cryptographically secure key generation, full 32 byte (256 bit) keys
-- Risk of brute force attempts at key discovery likely eliminated 
+- Risk of brute force attempts at key discovery likely eliminated
 - A deterministic ID protects user privacy when used in place of stored username on server
 - No need to manage or move keypairs around for use on different devices
 - Users never need to store sensitive key material on disk
@@ -43,7 +45,7 @@ The code is simple and easily auditable, and uses only the fast and secure `SHA2
 hash function, `scrypt` for strong key derivation, and the `NaCL` compatible
 encryption and digital signature keys provided by `tweetnacl-js`.
 
-This code was inspired by, but is **incompatible** with, the 
+This code was inspired by, but is **incompatible** with, the
 [session25519](https://github.com/jo/session25519) library created by
 [Johannes Jörg Schmidt (@jo)](https://github.com/jo).
 

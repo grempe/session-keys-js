@@ -176,6 +176,24 @@ application remains responsive while this code is running.
 
 ## Development
 
+### Setup
+
+This project now manages all dependencies with [yarn](https://yarnpkg.com) which
+you'll need to install first.
+
+Make sure you are using v0.16.0 or higher.
+
+```
+$ yarn -V
+0.16.0
+```
+
+Install all dependencies locally.
+
+```
+yarn
+```
+
 ### Build
 
 You can build a `dist` version of `sessionKeys` using `browserify`. There is a
@@ -183,20 +201,18 @@ pre-built version in the `dist` directory of this repository which includes
 all dependencies and can be used with a `<script>` tag in the browser.
 
 ```sh
-npm run build
+yarn run build
 ```
 
 ### Testing
 
 ```sh
-npm install -g browserify
-
 # run all tests locally with node
-npm test
+yarn test
 
 # run all tests locally from test.html in your default browser
 # test output will be in your browser's console.
-npm run test-browser
+yarn run test-browser
 ```
 
 ### Installation Security : Signed Git Commits

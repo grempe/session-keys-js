@@ -1019,9 +1019,9 @@ fast-levenshtein@~2.0.4:
   resolved "https://registry.yarnpkg.com/fast-levenshtein/-/fast-levenshtein-2.0.6.tgz#3d8a5c66883a16a30ca8643e851f19baa7797917"
 
 fast-sha256@^1.1.0:
-  version "1.1.0"
-  resolved "https://registry.yarnpkg.com/fast-sha256/-/fast-sha256-1.1.0.tgz#b640189403c7ff0d796d1251a1c1f6954c40e7b4"
-  integrity sha1-tkAYlAPH/w15bRJRocH2lUxA57Q=
+  version "1.1.1"
+  resolved "https://registry.yarnpkg.com/fast-sha256/-/fast-sha256-1.1.1.tgz#2a1fca6a7fd0943da478f17760d19cf52ba78dea"
+  integrity sha512-CKUjAtRhTHaLueE7eUPX4009H7yMZxxBWHYxvzCn3WySKza5+S5EknF86zpOzF4Is4/qNUzbrhtC19gUMzCUdQ==
 
 figures@^1.4.0:
   version "1.7.0"

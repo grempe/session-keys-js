@@ -42,7 +42,7 @@
   },
   "devDependencies": {
     "browserify": "^16.5.0",
-    "eslint": "^6.2.1",
+    "eslint": "^7.4.0",
     "eslint-config-standard": "^14.0.1",
     "eslint-plugin-promise": "^4.2.1",
     "eslint-plugin-standard": "^4.0.1",

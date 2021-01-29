@@ -48,6 +48,6 @@
     "eslint-plugin-standard": "^4.0.1",
     "tap-spec": "^5.0.0",
     "tape": "^4.11.0",
-    "watchify": "^3.11.1"
+    "watchify": "^4.0.0"
   }
 }
